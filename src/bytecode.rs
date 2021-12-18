@@ -47,6 +47,10 @@ impl Bytecode {
         return self.bytes.len();
     }
 
+    pub fn into_vec(self) -> Box<Vec<u8>> {
+        return self.bytes;
+    }
+
     pub fn bytes_to_string(bytes: &Vec<u8>) -> String {
         return bytes.iter().map(|v| {
             let s = format!("{:0x}", v);
