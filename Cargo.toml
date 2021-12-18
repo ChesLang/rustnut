@@ -1,0 +1,12 @@
+[package]
+name = "rustnut"
+version = "0.1.0"
+authors = ["Garnet3106 <manage@gant.work>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cc = "1.0.72"
+libc = "0.2.112"
+rustnutlib = { path = "../rustnutlib" }
