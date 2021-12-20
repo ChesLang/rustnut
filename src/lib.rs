@@ -31,7 +31,7 @@ impl ChesVM {
         }
 
         unsafe {
-            let mut interpreter = Interpreter::launch(bytecode, 1024 * 1024, 1024)?;
+            let mut interpreter = Interpreter::launch(bytecode, 1024, 1024)?;
             interpreter.run()?;
         }
 
