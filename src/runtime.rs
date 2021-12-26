@@ -165,12 +165,6 @@ impl DynamicHeap {
         self.top_ptr = self.top_ptr.add(size_of::<T>());
     }
 
-    pub fn len(&self) -> usize {
-        self.check_freed();
-
-        return self.counter;
-    }
-
     pub unsafe fn to_bytes(&self) -> Vec<u8> {
         self.check_freed();
 
@@ -211,6 +205,9 @@ pub enum OpcodeKind {
     IAdd64,
     Invoke,
     Call,
+    Jump,
+    JumpIf,
+    Nop,
 }
 
 impl Display for OpcodeKind {
@@ -227,6 +224,9 @@ impl Display for OpcodeKind {
             OpcodeKind::IAdd64 => "iadd_64",
             OpcodeKind::Invoke => "invoke",
             OpcodeKind::Call => "call",
+            OpcodeKind::Jump => "jump",
+            OpcodeKind::JumpIf => "jumpif",
+            OpcodeKind::Nop => "nop",
         };
 
         return write!(f, "{}", s);
@@ -245,7 +245,10 @@ impl From<u8> for OpcodeKind {
             0x06 => OpcodeKind::IAdd32,
             0x07 => OpcodeKind::IAdd64,
             0x08 => OpcodeKind::Invoke,
-            0x09 => OpcodeKind::Invoke,
+            0x09 => OpcodeKind::Call,
+            0x0a => OpcodeKind::Jump,
+            0x0b => OpcodeKind::JumpIf,
+            0x0c => OpcodeKind::Nop,
             _ => OpcodeKind::Unknown,
         };
     }
@@ -314,14 +317,27 @@ impl Interpreter {
             };
         }
 
-        // note: バイト単位
-        let func_area_elem_size = 8;
+        macro_rules! jump {
+            () => {
+                {
+                    let pop_value = *self.bytecode.next::<u32>();
+                    let index = (self.bytecode.counter as u32 + pop_value) as usize;
+                    println!("jump to 0x{:0x}", index);
+                    self.bytecode.jump_to(index);
+                }
+            };
+        }
+
+        // note: 関数領域の要素サイズ: バイト単位
+        let func_area_elem_size = size_of::<usize>() + 4;
+        println!("{:?}", self.bytecode.top_ptr);
 
         loop {
+            let counter = self.bytecode.counter;
             let opcode = *self.bytecode.next::<u8>();
             let opcode_kind = OpcodeKind::from(opcode);
 
-            println!("{}", format!("{} (0x{:0x})", opcode_kind, opcode).blue());
+            println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind, opcode, counter).blue());
             println!("{}", self.stack.to_string().bright_black());
             println!();
 
@@ -329,7 +345,7 @@ impl Interpreter {
                 OpcodeKind::Ret => {
                     let arg_size = *self.call_stack.pop_value::<u32>();
                     self.call_stack.pop_count::<u32>(arg_size as usize);
-                    let ret_addr = *self.call_stack.pop_value::<u32>();
+                    let ret_addr = *self.call_stack.pop_value::<usize>();
                     println!("return to 0x{:0x}", ret_addr);
                     self.bytecode.jump_to(ret_addr as usize);
                 },
@@ -349,11 +365,11 @@ impl Interpreter {
 
                     let ret_addr = self.bytecode.counter;
 
-                    println!("start at 0x{:0x}", start_addr);
+                    println!("go to 0x{:0x}", start_addr);
                     println!("ret to 0x{:0x}", ret_addr);
                     println!("{} byte argument", arg_size * 4);
 
-                    self.call_stack.push::<u32>(ret_addr as u32);
+                    self.call_stack.push::<usize>(ret_addr);
 
                     for _ in 0..arg_size {
                         let each_arg_value = *self.stack.pop_value::<u32>();
@@ -364,16 +380,48 @@ impl Interpreter {
                     self.bytecode.jump_to(start_addr as usize);
                 },
                 OpcodeKind::Call => {
-                    let _inst_num = *self.bytecode.next::<u8>();
-                    libc::write(1, "Hello".as_bytes().as_ptr() as *const c_void, "Hello".len() as u32);
+                    let call_num = *self.bytecode.next::<u8>();
+
+                    match call_num {
+                        0 => {
+                            self.stack.pop::<u32>();
+                            let byte_len = libc::write(1, self.stack.top_ptr, size_of::<u32>() as u32);
+
+                            if byte_len == -1 {
+                                panic!("{}", "failed to write on console".on_red())
+                            }
+                        },
+                        _ => panic!("{}", format!("unknown call number 0x{:0x}", call_num).on_red()),
+                    }
                 },
-                OpcodeKind::Unknown => panic!("{}", format!("unknown opcode '0x{:0x}' at '0x{:0x}'", opcode, self.bytecode.counter - 1).on_red()),
+                OpcodeKind::Jump => jump!(),
+                OpcodeKind::JumpIf => {
+                    let index = *self.stack.pop_value::<u32>();
+
+                    if index != 0 {
+                        jump!();
+                    } else {
+                        // note: 偽であってもオペランド分進める
+                        self.bytecode.next::<u32>();
+                    }
+                },
+                OpcodeKind::Nop => (),
+                OpcodeKind::Unknown => {
+                    println!("{:?} {:?}", self.bytecode.top_ptr, self.bytecode.origin_ptr);
+                    let a = *self.bytecode.pop_value::<u8>();
+                    let b = *self.bytecode.pop_value::<u8>();
+                    let c = *self.bytecode.pop_value::<u8>();
+                    let d = *self.bytecode.pop_value::<u8>();
+                    let e = *self.bytecode.pop_value::<u8>();
+                    println!("{:0x} {:0x} {:0x} {:0x} {:0x}", a, b, c, d, e);
+                    panic!("{}", format!("unknown opcode '0x{:0x}' at '0x{:0x}'", opcode, self.bytecode.counter - 1).on_red());
+                },
             }
 
             println!();
         }
 
-        if self.stack.len() != 0 {
+        if self.stack.counter != 0 {
             println!("unconsumed stack element(s):");
             println!("{}", self.stack);
             panic!("{}", "unconsumed stack element(s)".on_red());
