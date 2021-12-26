@@ -1,5 +1,3 @@
-use crate::runtime::*;
-
 pub const HEADER_SIZE: &'static usize = &128;
 
 pub const CURRENT_CHES_VERSION: &'static (usize, usize, usize) = &(1, 0, 0);
@@ -30,17 +28,15 @@ impl Bytecode {
         };
     }
 
-    pub fn print(&self) -> RuntimeResult<()> {
+    pub fn print(&self) {
         println!("- Ches Bytecode -");
         println!();
-        println!("MAGIC NUMBER\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::MagicNumber.get_bytecode_range())?));
-        println!("CODE NAME\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::CodeName.get_bytecode_range())?));
-        println!("CHES VERSION\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::ChesVersion.get_bytecode_range())?));
+        println!("MAGIC NUMBER\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::MagicNumber.get_bytecode_range()).unwrap()));
+        println!("CODE NAME\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::CodeName.get_bytecode_range()).unwrap()));
+        println!("CHES VERSION\t{}", Bytecode::bytes_to_string(&self.get_bytes(HeaderItem::ChesVersion.get_bytecode_range()).unwrap()));
         println!();
         println!("{}", Bytecode::bytes_to_string(&*self.bytes));
         println!();
-
-        return Ok(());
     }
 
     pub fn len(&self) -> usize {
@@ -58,18 +54,18 @@ impl Bytecode {
         }).collect::<Vec<String>>().join(" ");
     }
 
-    pub fn get_bytes(&self, range: BytecodeRange) -> RuntimeResult<Vec<u8>> {
+    pub fn get_bytes(&self, range: BytecodeRange) -> Option<Vec<u8>> {
         return if range.begin + range.len > self.bytes.len() {
-            Err(RuntimeError::IndexOutOfBytecodeRange {})
+            None
         } else {
-            Ok(self.bytes[range.begin..range.begin + range.len].to_vec().clone())
+            Some(self.bytes[range.begin..range.begin + range.len].to_vec().clone())
         };
     }
 
     pub fn match_bytes(&self, range: BytecodeRange, pattern: &Vec<u8>) -> bool {
         return match self.get_bytes(range) {
-            Ok(v) => *pattern == v,
-            Err(_) => false,
+            Some(v) => *pattern == v,
+            None => false,
         }
     }
 }
