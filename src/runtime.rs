@@ -12,6 +12,9 @@ pub enum ExitStatus {
     Success,
     UnknownOpcode,
     BytecodeAccessViolation,
+    StackOverflow,
+    StackAccessViolation,
+    UnconsumedStackElement,
     Unknown,
 }
 
@@ -21,6 +24,9 @@ impl Display for ExitStatus {
             ExitStatus::Success => "SUCCESS",
             ExitStatus::UnknownOpcode => "UNKNOWN_OPCODE",
             ExitStatus::BytecodeAccessViolation => "BYTECODE_ACCESS_VIOLATION",
+            ExitStatus::StackOverflow => "STACK_OVERFLOW",
+            ExitStatus::StackAccessViolation => "STACK_ACCESS_VIOLATION",
+            ExitStatus::UnconsumedStackElement => "UNCONSUMED_STACK_ELEMENT",
             ExitStatus::Unknown => "UNKNOWN",
         };
 
@@ -34,6 +40,9 @@ impl From<i32> for ExitStatus {
             0 => ExitStatus::Success,
             1 => ExitStatus::UnknownOpcode,
             2 => ExitStatus::BytecodeAccessViolation,
+            3 => ExitStatus::StackOverflow,
+            4 => ExitStatus::StackAccessViolation,
+            5 => ExitStatus::UnconsumedStackElement,
             _ => ExitStatus::Unknown,
         };
     }
@@ -43,6 +52,10 @@ pub enum Opcode {
     Unknown,
     Nop,
     Exit,
+    Push32,
+    Push64,
+    Pop32,
+    Pop64,
 }
 
 impl Display for Opcode {
@@ -51,6 +64,10 @@ impl Display for Opcode {
             Opcode::Unknown => "unknown",
             Opcode::Nop => "nop",
             Opcode::Exit => "exit",
+            Opcode::Push32 => "push_32",
+            Opcode::Push64 => "push_64",
+            Opcode::Pop32 => "pop_32",
+            Opcode::Pop64 => "pop_64",
         };
 
         return write!(f, "{}", s);
@@ -62,6 +79,10 @@ impl From<u8> for Opcode {
         return match value {
             0x00 => Opcode::Nop,
             0x01 => Opcode::Exit,
+            0x02 => Opcode::Push32,
+            0x03 => Opcode::Push64,
+            0x04 => Opcode::Pop32,
+            0x05 => Opcode::Pop64,
             _ => Opcode::Unknown,
         };
     }
@@ -96,15 +117,35 @@ impl Interpreter {
         let entry_point_index = 0xd0usize;
         bytecode_ptr = bytecode_ptr.add(entry_point_index);
 
-        let stack_ptr = malloc(1024) as *mut c_void;
-        let call_stack_ptr = malloc(1024) as *mut c_void;
+        let max_stack_size = 1024;
+        let mut stack_ptr = malloc(max_stack_size) as *mut c_void;
+        let call_stack_ptr = malloc(max_stack_size) as *mut c_void;
 
         // note: Exit Status
         let mut es = 0i32;
         // note: Stack Pointer
-        let sp = 0usize;
+        let mut sp = 0usize;
         // note: Program Counter
         let mut pc = entry_point_index;
+
+        macro_rules! raw_ptr_to_string {
+            ($ptr:expr, $size:expr) => {
+                {
+                    let mut i = 0usize;
+                    let bytes = from_raw_parts($ptr as *const u8, $size).to_vec();
+
+                    if bytes.len() != 0 {
+                        bytes.iter().map(|v| {
+                            let div = if i != 0 && i % 8 == 0 { "|\n" } else { "" };
+                            i += 1;
+                            format!("{}{:0x} ", div, v)
+                        }).collect::<Vec<String>>().join("")
+                    } else {
+                        "<empty>".to_string()
+                    }
+                }
+            };
+        }
 
         macro_rules! next_bytecode {
             ($ty:ty) => {
@@ -126,21 +167,40 @@ impl Interpreter {
             };
         }
 
-        macro_rules! raw_ptr_to_string {
-            ($ptr:expr, $size:expr) => {
+        macro_rules! push_next {
+            ($ty:ty) => {
                 {
-                    let mut i = 0usize;
-                    let bytes = from_raw_parts($ptr as *const u8, $size).to_vec();
+                    let value = next_bytecode!($ty);
+                    let size = size_of::<$ty>();
 
-                    if bytes.len() != 0 {
-                        bytes.iter().map(|v| {
-                            let div = if i != 0 && i % 8 == 0 { "|\n" } else { "" };
-                            i += 1;
-                            format!("{}{:0x} ", div, v)
-                        }).collect::<Vec<String>>().join("")
-                    } else {
-                        "<empty>".to_string()
+                    if sp + size > max_stack_size {
+                        es = ExitStatus::StackOverflow as i32;
+                        break;
                     }
+
+                    let tmp_stack = stack_ptr as *mut $ty;
+                    *tmp_stack = value;
+
+                    sp += size;
+                    stack_ptr = stack_ptr.add(size);
+                }
+            };
+        }
+
+        macro_rules! pop {
+            ($ty:ty) => {
+                {
+                    let size = size_of::<$ty>();
+
+                    if sp < size {
+                        es = ExitStatus::StackAccessViolation as i32;
+                        break;
+                    }
+
+                    sp -= size;
+                    stack_ptr = stack_ptr.sub(size);
+
+                    *(stack_ptr as *mut $ty)
                 }
             };
         }
@@ -151,16 +211,35 @@ impl Interpreter {
             let opcode_kind = Opcode::from(opcode);
 
             println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind, opcode, tmp_pc).blue());
-            println!("{}", raw_ptr_to_string!(stack_ptr, sp).bright_black());
+            println!("{}", raw_ptr_to_string!(stack_ptr.sub(sp), sp).bright_black());
             println!();
 
             match opcode_kind {
                 Opcode::Nop => (),
                 Opcode::Exit => break,
+                Opcode::Push32 => push_next!(u32),
+                Opcode::Push64 => push_next!(u64),
+                Opcode::Pop32 => {
+                    let _ = pop!(u32);
+                },
+                Opcode::Pop64 => {
+                    let _ = pop!(u64);
+                },
                 Opcode::Unknown => {
                     es = ExitStatus::UnknownOpcode as i32;
                     break;
                 },
+            }
+        }
+
+        if sp != 0 {
+            println!("unconsumed stack element(s):");
+            println!("{}", raw_ptr_to_string!(stack_ptr.sub(sp), sp).bright_black());
+            println!();
+
+            // note: 終了コードが 0 でなければ上書きしない
+            if es == 0 {
+                es = ExitStatus::UnconsumedStackElement as i32;
             }
         }
 
@@ -171,13 +250,7 @@ impl Interpreter {
             exit_status_msg.on_red()
         });
 
-        // if self.stack.counter != 0 {
-        //     println!("unconsumed stack element(s):");
-        //     println!("{}", self.stack);
-        //     panic!("{}", "unconsumed stack element(s)".on_red());
-        // }
-
-        free(stack_ptr);
+        free(stack_ptr.sub(sp));
         free(call_stack_ptr);
 
         return ExitStatus::from(es);
