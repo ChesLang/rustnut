@@ -200,13 +200,13 @@ impl Interpreter {
 
             macro_rules! jump_to_link_elem {
                 ($link_num:expr) => {
-                    jump_to!(link_area_ptr, lap, link_area_offset + $link_num * link_element_size, bytecode_len, ExitStatus::BytecodeAccessViolation as u32)
+                    jump_to!(link_area_ptr, lap, link_area_offset + $link_num * link_element_size, bytecode_len, ExitStatus::BytecodeAccessViolation)
                 };
             }
 
             macro_rules! jump_bytecode_to {
                 ($address:expr) => {
-                    jump_to!(bytecode_ptr, pc, $address, bytecode_len, ExitStatus::BytecodeAccessViolation as u32)
+                    jump_to!(bytecode_ptr, pc, $address, bytecode_len, ExitStatus::BytecodeAccessViolation)
                 };
             }
 
@@ -231,13 +231,13 @@ impl Interpreter {
 
             macro_rules! next_bytecode {
                 ($ty:ty) => {
-                    next!(bytecode_ptr, pc, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation as u32)
+                    next!(bytecode_ptr, pc, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
                 };
             }
 
             macro_rules! next_link_area {
                 ($ty:ty) => {
-                    next!(link_area_ptr, lap, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation as u32)
+                    next!(link_area_ptr, lap, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
                 };
             }
 
@@ -257,7 +257,7 @@ impl Interpreter {
 
             macro_rules! call_stack_top {
                 ($ty:ty) => {
-                    top!(call_stack_ptr, csp, $ty, ExitStatus::CallStackOverflow as u32)
+                    top!(call_stack_ptr, csp, $ty, ExitStatus::CallStackOverflow)
                 };
             }
 
@@ -282,7 +282,7 @@ impl Interpreter {
             macro_rules! push_stack {
                 ($ty:ty, $value:expr $(, $count_fsp:expr)?) => {
                     {
-                        push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow as u32);
+                        push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow);
 
                         #[allow(unused_assignments, unused_mut)]
                         let mut count = true;
@@ -297,7 +297,7 @@ impl Interpreter {
 
             macro_rules! push_call_stack {
                 ($ty:ty, $value:expr) => {
-                    push!(call_stack_ptr, csp, $ty, $value, max_stack_size, ExitStatus::CallStackOverflow as u32)
+                    push!(call_stack_ptr, csp, $ty, $value, max_stack_size, ExitStatus::CallStackOverflow)
                 };
             }
 
@@ -330,7 +330,7 @@ impl Interpreter {
             macro_rules! pop_stack {
                 ($ty:ty $(, $count_fsp:expr)?) => {
                     {
-                        pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation as u32);
+                        pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation);
 
                         #[allow(unused_assignments, unused_mut)]
                         let mut count = true;
@@ -345,7 +345,7 @@ impl Interpreter {
 
             macro_rules! pop_call_stack {
                 ($ty:ty) => {
-                    pop!(call_stack_ptr, csp, $ty, ExitStatus::CallStackAccessViolation as u32)
+                    pop!(call_stack_ptr, csp, $ty, ExitStatus::CallStackAccessViolation)
                 };
             }
 
@@ -389,7 +389,7 @@ impl Interpreter {
                         println!();
 
                         // note: 先に呼び出し元のコールスタックから引数分の fsp を減算
-                        sub_fsp!(size_of::<u32>() as u32 * arg_len);
+                        sub_fsp!(size_of::<usize>() as u32 * arg_len);
 
                         // note: コールスタックにリターンアドレスをプッシュ
                         push_call_stack!(usize, ret_addr);
@@ -400,13 +400,13 @@ impl Interpreter {
 
                         // note: 引数をコールスタックへコピー
                         for i in 0..arg_len as usize {
-                            let value = *((stack_ptr as *mut u32).sub(arg_len as usize - i));
-                            push_call_stack!(u32, value);
+                            let value = *((stack_ptr as *mut usize).sub(arg_len as usize - i));
+                            push_call_stack!(usize, value);
                         }
 
                         // note: スタックから引数分の要素をポップ; コールスタック操作後のため fsp を変更しない
                         for _ in 0..arg_len {
-                            pop_stack!(u32, false);
+                            pop_stack!(usize, false);
                         }
 
                         // note: コールスタックに引数サイズをプッシュ
@@ -428,28 +428,36 @@ impl Interpreter {
                     {
                         let fsp = call_stack_top!(u32);
 
+                        println!("{}", format!("[fsp={}]", fsp).bright_green().dimmed());
+                        println!();
+
+                        println!("{}", "call stack (prev):".bright_black());
+                        println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
+                        println!();
+
                         for _ in 0..fsp {
                             pop_stack!(u8);
                         }
 
+                        // note: コールスタックから fsp をポップ
                         pop_call_stack!(u32);
 
                         let arg_len = pop_call_stack!(u32);
 
                         for _ in 0..arg_len {
-                            pop_call_stack!(u32);
+                            pop_call_stack!(usize);
                         }
 
                         let ret_addr = pop_call_stack!(usize);
+
+                        println!("{}", "call stack (modded):".bright_black());
+                        println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
+                        println!();
 
                         println!("{}", format!("[return to 0x{:0x} / {} arguments / pop {} bytes]", ret_addr, arg_len, fsp).bright_green().dimmed());
                         println!();
 
                         jump_bytecode_to!(ret_addr);
-
-                        println!("{}", "call stack:".bright_black());
-                        println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
-                        println!();
                     }
                 };
             }
