@@ -172,7 +172,10 @@ impl Interpreter {
                         bytes.iter().map(|v| {
                             let div = if i != 0 && i % 8 == 0 { "|\n" } else { "" };
                             i += 1;
-                            format!("{}{:0x} ", div, v)
+
+                            let zero = if format!("{:0x}", v).len() == 1 { "0" } else { "" };
+
+                            format!("{}{}{:0x} ", div, zero, v)
                         }).collect::<Vec<String>>().join("")
                     } else {
                         "<empty>".to_string()
@@ -281,13 +284,11 @@ impl Interpreter {
                     {
                         push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow as u32);
 
-                        if true {
-                            $(
-                                if !$count_fsp {
-                                    ()
-                                }
-                            )?
+                        #[allow(unused_assignments, unused_mut)]
+                        let mut count = true;
+                        $(count = $count_fsp;)?
 
+                        if count {
                             add_fsp!(size_of::<$ty>() as u32);
                         }
                     }
@@ -331,13 +332,11 @@ impl Interpreter {
                     {
                         pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation as u32);
 
-                        if true {
-                            $(
-                                if !$count_fsp {
-                                    ()
-                                }
-                            )?
+                        #[allow(unused_assignments, unused_mut)]
+                        let mut count = true;
+                        $(count = $count_fsp;)?
 
+                        if count {
                             sub_fsp!(size_of::<$ty>() as u32);
                         }
                     }
@@ -382,7 +381,11 @@ impl Interpreter {
                         let start_addr = next_link_area!(usize);
                         let arg_len = next_link_area!(u32);
 
-                        println!("link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} byte arguments", link_num, start_addr, ret_addr, arg_len);
+                        println!("{}", format!("[link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} byte arguments]", link_num, start_addr, ret_addr, arg_len * 4).bright_green().dimmed());
+                        println!();
+
+                        println!("{}", "call stack (prev):".bright_black());
+                        println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
                         println!();
 
                         // note: 先に呼び出し元のコールスタックから引数分の fsp を減算
@@ -411,7 +414,7 @@ impl Interpreter {
                         // note: コールスタックにスタックポインタをプッシュ
                         push_call_stack!(u32, 0);
 
-                        println!("{}", "call stack:".bright_black());
+                        println!("{}", "call stack (modded):".bright_black());
                         println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
                         println!();
 
@@ -439,7 +442,7 @@ impl Interpreter {
 
                         let ret_addr = pop_call_stack!(usize);
 
-                        println!("return to 0x{:0x} / {} arguments / pop {} bytes", ret_addr, arg_len, fsp);
+                        println!("{}", format!("[return to 0x{:0x} / {} arguments / pop {} bytes]", ret_addr, arg_len, fsp).bright_green().dimmed());
                         println!();
 
                         jump_bytecode_to!(ret_addr);
@@ -464,7 +467,7 @@ impl Interpreter {
             let opcode = next_bytecode!(u8);
             let opcode_kind = Opcode::from(opcode);
 
-            println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind, opcode, tmp_pc).blue());
+            println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind.to_string().to_uppercase(), opcode, tmp_pc).blue());
             println!("{}", raw_ptr_to_string!(stack_ptr.sub(sp), sp).bright_black());
             println!();
 
