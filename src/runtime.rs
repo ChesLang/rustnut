@@ -133,7 +133,7 @@ impl Interpreter {
 
         // todo: 接頭辞 r_
         // note: Exit Status
-        let mut es;
+        let es;
         // note: Stack Pointer
         let mut sp = 0usize;
         // note: Call Stack Pointer
@@ -277,12 +277,19 @@ impl Interpreter {
             }
 
             macro_rules! push_stack {
-                ($ty:ty, $value:expr) => {
+                ($ty:ty, $value:expr $(, $count_fsp:expr)?) => {
                     {
                         push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow as u32);
-                        // note: コールスタックのスタックポインタを加算
-                        let func_sp = pop_call_stack!(u32);
-                        push_call_stack!(u32, func_sp + size_of::<$ty>() as u32);
+
+                        if true {
+                            $(
+                                if !$count_fsp {
+                                    ()
+                                }
+                            )?
+
+                            add_fsp!(size_of::<$ty>() as u32);
+                        }
                     }
                 };
             }
@@ -320,25 +327,19 @@ impl Interpreter {
             }
 
             macro_rules! pop_stack {
-                ($ty:ty) => {
+                ($ty:ty $(, $count_fsp:expr)?) => {
                     {
                         pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation as u32);
- 
-                        // note: コールスタックのスタックポインタを減算
-                        let func_sp = pop_call_stack!(u32);
-                        let value_size = size_of::<$ty>() as u32;
 
-                        if func_sp < value_size {
-                            exit!(ExitStatus::StackAccessViolation);
+                        if true {
+                            $(
+                                if !$count_fsp {
+                                    ()
+                                }
+                            )?
+
+                            sub_fsp!(size_of::<$ty>() as u32);
                         }
-
-                        push_call_stack!(u32, func_sp - value_size);
-                    }
-                };
-
-                ($ty:ty, $len:expr) => {
-                    for _ in 0..$len {
-                        pop_stack!($ty);
                     }
                 };
             }
@@ -347,11 +348,28 @@ impl Interpreter {
                 ($ty:ty) => {
                     pop!(call_stack_ptr, csp, $ty, ExitStatus::CallStackAccessViolation as u32)
                 };
+            }
 
-                ($ty:ty, $len:expr) => {
-                    for _ in 0..$len {
-                        pop_call_stack!($ty);
+            /// コールスタックのスタックポインタ (fsp) を加算
+            macro_rules! add_fsp {
+                ($size:expr) => {
+                    {
+                        let fsp = pop_call_stack!(u32);
+                        push_call_stack!(u32, fsp + $size);
                     }
+                };
+            }
+
+            /// コールスタックのスタックポインタ (fsp) を減算
+            macro_rules! sub_fsp {
+                ($size:expr) => {
+                    let fsp = pop_call_stack!(u32);
+
+                    if fsp < $size {
+                        exit!(ExitStatus::StackAccessViolation);
+                    }
+
+                    push_call_stack!(u32, fsp - $size);
                 };
             }
 
@@ -364,9 +382,13 @@ impl Interpreter {
                         let start_addr = next_link_area!(usize);
                         let arg_len = next_link_area!(u32);
 
-                        println!("link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} arguments", link_num, start_addr, ret_addr, arg_len);
+                        println!("link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} byte arguments", link_num, start_addr, ret_addr, arg_len);
                         println!();
 
+                        // note: 先に呼び出し元のコールスタックから引数分の fsp を減算
+                        sub_fsp!(size_of::<u32>() as u32 * arg_len);
+
+                        // note: コールスタックにリターンアドレスをプッシュ
                         push_call_stack!(usize, ret_addr);
 
                         if sp < arg_len as usize * size_of::<u32>() {
@@ -379,8 +401,11 @@ impl Interpreter {
                             push_call_stack!(u32, value);
                         }
 
-                        // note: スタックから引数分の要素をポップ
-                        pop_stack!(u32, arg_len);
+                        // note: スタックから引数分の要素をポップ; コールスタック操作後のため fsp を変更しない
+                        for _ in 0..arg_len {
+                            pop_stack!(u32, false);
+                        }
+
                         // note: コールスタックに引数サイズをプッシュ
                         push_call_stack!(u32, arg_len);
                         // note: コールスタックにスタックポインタをプッシュ
@@ -398,16 +423,23 @@ impl Interpreter {
             macro_rules! ret {
                 () => {
                     {
-                        let func_sp = call_stack_top!(u32);
-                        pop_stack!(u8, func_sp);
+                        let fsp = call_stack_top!(u32);
+
+                        for _ in 0..fsp {
+                            pop_stack!(u8);
+                        }
+
                         pop_call_stack!(u32);
 
                         let arg_len = pop_call_stack!(u32);
-                        pop_call_stack!(u32, arg_len);
+
+                        for _ in 0..arg_len {
+                            pop_call_stack!(u32);
+                        }
 
                         let ret_addr = pop_call_stack!(usize);
 
-                        println!("return to 0x{:0x} / {} arguments / pop {} stack elements", ret_addr, arg_len, func_sp);
+                        println!("return to 0x{:0x} / {} arguments / pop {} bytes", ret_addr, arg_len, fsp);
                         println!();
 
                         jump_bytecode_to!(ret_addr);
