@@ -16,6 +16,8 @@ pub enum ExitStatus {
     CallStackOverflow,
     StackAccessViolation,
     CallStackAccessViolation,
+    ArithmeticOverflow,
+    DivideByZero,
     Unknown,
 }
 
@@ -29,6 +31,8 @@ impl Display for ExitStatus {
             ExitStatus::CallStackOverflow => "CALL_STACK_OVERFLOW",
             ExitStatus::StackAccessViolation => "STACK_ACCESS_VIOLATION",
             ExitStatus::CallStackAccessViolation => "CALL_STACK_ACCESS_VIOLATION",
+            ExitStatus::ArithmeticOverflow => "ARITHMETIC_OVERFLOW",
+            ExitStatus::DivideByZero => "DIVIDE_BY_ZERO",
             ExitStatus::Unknown => "UNKNOWN",
         };
 
@@ -46,6 +50,8 @@ impl From<u32> for ExitStatus {
             4 => ExitStatus::CallStackOverflow,
             5 => ExitStatus::StackAccessViolation,
             6 => ExitStatus::CallStackAccessViolation,
+            7 => ExitStatus::ArithmeticOverflow,
+            8 => ExitStatus::DivideByZero,
             _ => ExitStatus::Unknown,
         };
     }
@@ -62,6 +68,14 @@ pub enum Opcode {
     Push64,
     Pop32,
     Pop64,
+    IAdd32,
+    IAdd64,
+    ISub32,
+    ISub64,
+    IMul32,
+    IMul64,
+    IDiv32,
+    IDiv64,
 }
 
 impl Display for Opcode {
@@ -77,6 +91,14 @@ impl Display for Opcode {
             Opcode::Push64 => "push_64",
             Opcode::Pop32 => "pop_32",
             Opcode::Pop64 => "pop_64",
+            Opcode::IAdd32 => "iadd_32",
+            Opcode::IAdd64 => "iadd_64",
+            Opcode::ISub32 => "isub_32",
+            Opcode::ISub64 => "isub_64",
+            Opcode::IMul32 => "imul_32",
+            Opcode::IMul64 => "imul_64",
+            Opcode::IDiv32 => "idiv_32",
+            Opcode::IDiv64 => "idiv_64",
         };
 
         return write!(f, "{}", s);
@@ -95,6 +117,14 @@ impl From<u8> for Opcode {
             0x06 => Opcode::Push64,
             0x07 => Opcode::Pop32,
             0x08 => Opcode::Pop64,
+            0x09 => Opcode::IAdd32,
+            0x0a => Opcode::IAdd64,
+            0x0b => Opcode::ISub32,
+            0x0c => Opcode::ISub64,
+            0x0d => Opcode::IMul32,
+            0x0e => Opcode::IMul64,
+            0x0f => Opcode::IDiv32,
+            0x10 => Opcode::IDiv64,
             _ => Opcode::Unknown,
         };
     }
@@ -487,6 +517,29 @@ impl Interpreter {
                 };
             }
 
+            macro_rules! calc {
+                ($ty:ty, $f:ident$(, $check_divide_by_zero:expr)?) => {
+                    {
+                        let right_term = pop_stack!($ty);
+                        let left_term = pop_stack!($ty);
+
+                        $(
+                            if $check_divide_by_zero && right_term == 0 {
+                                exit!(ExitStatus::DivideByZero);
+                            }
+                        )?
+
+                        let (value, overflowed) = left_term.$f(right_term);
+
+                        if overflowed {
+                            exit!(ExitStatus::ArithmeticOverflow);
+                        }
+
+                        push_stack!($ty, value);
+                    }
+                };
+            }
+
             let tmp_pc = pc;
             let opcode = next_bytecode!(u8);
             let opcode_kind = Opcode::from(opcode);
@@ -509,6 +562,14 @@ impl Interpreter {
                 Opcode::Pop64 => {
                     let _ = pop_stack!(u64);
                 },
+                Opcode::IAdd32 => calc!(u32, overflowing_add),
+                Opcode::IAdd64 => calc!(u64, overflowing_add),
+                Opcode::ISub32 => calc!(u32, overflowing_sub),
+                Opcode::ISub64 => calc!(u64, overflowing_sub),
+                Opcode::IMul32 => calc!(u32, overflowing_mul),
+                Opcode::IMul64 => calc!(u64, overflowing_mul),
+                Opcode::IDiv32 => calc!(u32, overflowing_div, true),
+                Opcode::IDiv64 => calc!(u64, overflowing_div, true),
                 Opcode::Unknown => exit!(ExitStatus::UnknownOpcode),
             }
         }
