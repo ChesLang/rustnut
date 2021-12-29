@@ -57,6 +57,7 @@ pub enum Opcode {
     Exit,
     Invoke,
     Ret,
+    RetVal,
     Push32,
     Push64,
     Pop32,
@@ -71,6 +72,7 @@ impl Display for Opcode {
             Opcode::Exit => "exit",
             Opcode::Invoke => "invoke",
             Opcode::Ret => "ret",
+            Opcode::RetVal => "retval",
             Opcode::Push32 => "push_32",
             Opcode::Push64 => "push_64",
             Opcode::Pop32 => "pop_32",
@@ -88,10 +90,11 @@ impl From<u8> for Opcode {
             0x01 => Opcode::Exit,
             0x02 => Opcode::Invoke,
             0x03 => Opcode::Ret,
-            0x04 => Opcode::Push32,
-            0x05 => Opcode::Push64,
-            0x06 => Opcode::Pop32,
-            0x07 => Opcode::Pop64,
+            0x04 => Opcode::RetVal,
+            0x05 => Opcode::Push32,
+            0x06 => Opcode::Push64,
+            0x07 => Opcode::Pop32,
+            0x08 => Opcode::Pop64,
             _ => Opcode::Unknown,
         };
     }
@@ -282,8 +285,6 @@ impl Interpreter {
             macro_rules! push_stack {
                 ($ty:ty, $value:expr $(, $count_fsp:expr)?) => {
                     {
-                        push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow);
-
                         #[allow(unused_assignments, unused_mut)]
                         let mut count = true;
                         $(count = $count_fsp;)?
@@ -291,6 +292,8 @@ impl Interpreter {
                         if count {
                             add_fsp!(size_of::<$ty>() as u32);
                         }
+
+                        push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow)
                     }
                 };
             }
@@ -330,8 +333,6 @@ impl Interpreter {
             macro_rules! pop_stack {
                 ($ty:ty $(, $count_fsp:expr)?) => {
                     {
-                        pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation);
-
                         #[allow(unused_assignments, unused_mut)]
                         let mut count = true;
                         $(count = $count_fsp;)?
@@ -339,6 +340,8 @@ impl Interpreter {
                         if count {
                             sub_fsp!(size_of::<$ty>() as u32);
                         }
+
+                        pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation)
                     }
                 };
             }
@@ -381,7 +384,7 @@ impl Interpreter {
                         let start_addr = next_link_area!(usize);
                         let arg_len = next_link_area!(u32);
 
-                        println!("{}", format!("[link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} byte arguments]", link_num, start_addr, ret_addr, arg_len * 4).bright_green().dimmed());
+                        println!("{}", format!("[link number 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} arguments]", link_num, start_addr, ret_addr, arg_len).bright_green().dimmed());
                         println!();
 
                         println!("{}", "call stack (prev):".bright_black());
@@ -424,8 +427,15 @@ impl Interpreter {
             }
 
             macro_rules! ret {
-                () => {
+                ($ret_value:expr) => {
                     {
+                        let ret_value = if $ret_value {
+                            // note: スタックから事前に返り値をポップ
+                            pop_stack!(usize)
+                        } else {
+                            0
+                        };
+
                         let fsp = call_stack_top!(u32);
 
                         println!("{}", format!("[fsp={}]", fsp).bright_green().dimmed());
@@ -454,8 +464,14 @@ impl Interpreter {
                         println!("{}", raw_ptr_to_string!(call_stack_ptr.sub(csp), csp).bright_black());
                         println!();
 
-                        println!("{}", format!("[return to 0x{:0x} / {} arguments / pop {} bytes]", ret_addr, arg_len, fsp).bright_green().dimmed());
+                        let ret_value_str = if $ret_value { format!(" / return 0x{:0x}", ret_value) } else { String::new() };
+                        println!("{}", format!("[return to 0x{:0x} / {} arguments / pop {} bytes{}]", ret_addr, arg_len, fsp, ret_value_str).bright_green().dimmed());
                         println!();
+
+                        if $ret_value {
+                            // note: スタックに返り値をプッシュ
+                            push_stack!(usize, ret_value);
+                        }
 
                         jump_bytecode_to!(ret_addr);
                     }
@@ -483,7 +499,8 @@ impl Interpreter {
                 Opcode::Nop => (),
                 Opcode::Exit => exit!(ExitStatus::Success),
                 Opcode::Invoke => invoke!(),
-                Opcode::Ret => ret!(),
+                Opcode::Ret => ret!(false),
+                Opcode::RetVal => ret!(true),
                 Opcode::Push32 => push_stack_next!(u32),
                 Opcode::Push64 => push_stack_next!(u64),
                 Opcode::Pop32 => {
