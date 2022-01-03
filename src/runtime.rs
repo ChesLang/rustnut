@@ -77,6 +77,12 @@ pub enum Opcode {
     LMul,
     IDiv,
     LDiv,
+    IEq,
+    LEq,
+    IOrd,
+    LOrd,
+    IEqOrd,
+    LEqOrd,
 }
 
 impl Display for Opcode {
@@ -107,6 +113,12 @@ impl Display for Opcode {
             Opcode::LMul => "lmul",
             Opcode::IDiv => "idiv",
             Opcode::LDiv => "ldiv",
+            Opcode::IEq => "ieq",
+            Opcode::LEq => "leq",
+            Opcode::IOrd => "iord",
+            Opcode::LOrd => "lord",
+            Opcode::IEqOrd => "ieqord",
+            Opcode::LEqOrd => "leqord",
         };
 
         return write!(f, "{}", s);
@@ -140,6 +152,12 @@ impl From<u8> for Opcode {
             0x15 => Opcode::LMul,
             0x16 => Opcode::IDiv,
             0x17 => Opcode::LDiv,
+            0x18 => Opcode::IEq,
+            0x19 => Opcode::LEq,
+            0x1a => Opcode::IOrd,
+            0x1b => Opcode::LOrd,
+            0x1c => Opcode::IEqOrd,
+            0x1d => Opcode::LEqOrd,
             _ => Opcode::Unknown,
         };
     }
@@ -454,6 +472,8 @@ impl Interpreter {
 
         if is_init_succeeded {
             // note: エントリポイント用のコールスタック要素をプッシュ
+            println!("{}", "<INVOKE ENTRY POINT>".blue());
+            println!();
             // * ベースポインタ
             stack_push!(usize, 0);
             // * リターンアドレス
@@ -582,6 +602,36 @@ impl Interpreter {
                     Opcode::LMul => calc!(u64, overflowing_mul),
                     Opcode::IDiv => calc!(u32, overflowing_div, true),
                     Opcode::LDiv => calc!(u64, overflowing_div, true),
+                    Opcode::IEq => {
+                        let value2 = stack_pop!(u32);
+                        let value1 = stack_pop!(u32);
+                        stack_push!(u32, (value1 == value2) as u32);
+                    },
+                    Opcode::LEq => {
+                        let value2 = stack_pop!(u64);
+                        let value1 = stack_pop!(u64);
+                        stack_push!(u32, (value1 == value2) as u32);
+                    },
+                    Opcode::IOrd => {
+                        let value2 = stack_pop!(u32);
+                        let value1 = stack_pop!(u32);
+                        stack_push!(u32, (value1 < value2) as u32);
+                    },
+                    Opcode::LOrd => {
+                        let value2 = stack_pop!(u64);
+                        let value1 = stack_pop!(u64);
+                        stack_push!(u32, (value1 < value2) as u32);
+                    },
+                    Opcode::IEqOrd => {
+                        let value2 = stack_pop!(u32);
+                        let value1 = stack_pop!(u32);
+                        stack_push!(u32, (value1 <= value2) as u32);
+                    },
+                    Opcode::LEqOrd => {
+                        let value2 = stack_pop!(u64);
+                        let value1 = stack_pop!(u64);
+                        stack_push!(u32, (value1 <= value2) as u32);
+                    },
                     Opcode::Unknown => exit!(UnknownOpcode),
                 }
             }
