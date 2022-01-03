@@ -13,9 +13,7 @@ pub enum ExitStatus {
     UnknownOpcode,
     BytecodeAccessViolation,
     StackOverflow,
-    CallStackOverflow,
     StackAccessViolation,
-    CallStackAccessViolation,
     ArithmeticOverflow,
     DivideByZero,
     Unknown,
@@ -28,9 +26,7 @@ impl Display for ExitStatus {
             ExitStatus::UnknownOpcode => "UNKNOWN_OPCODE",
             ExitStatus::BytecodeAccessViolation => "BYTECODE_ACCESS_VIOLATION",
             ExitStatus::StackOverflow => "STACK_OVERFLOW",
-            ExitStatus::CallStackOverflow => "CALL_STACK_OVERFLOW",
             ExitStatus::StackAccessViolation => "STACK_ACCESS_VIOLATION",
-            ExitStatus::CallStackAccessViolation => "CALL_STACK_ACCESS_VIOLATION",
             ExitStatus::ArithmeticOverflow => "ARITHMETIC_OVERFLOW",
             ExitStatus::DivideByZero => "DIVIDE_BY_ZERO",
             ExitStatus::Unknown => "UNKNOWN",
@@ -47,11 +43,9 @@ impl From<u32> for ExitStatus {
             1 => ExitStatus::UnknownOpcode,
             2 => ExitStatus::BytecodeAccessViolation,
             3 => ExitStatus::StackOverflow,
-            4 => ExitStatus::CallStackOverflow,
-            5 => ExitStatus::StackAccessViolation,
-            6 => ExitStatus::CallStackAccessViolation,
-            7 => ExitStatus::ArithmeticOverflow,
-            8 => ExitStatus::DivideByZero,
+            4 => ExitStatus::StackAccessViolation,
+            5 => ExitStatus::ArithmeticOverflow,
+            6 => ExitStatus::DivideByZero,
             _ => ExitStatus::Unknown,
         };
     }
@@ -61,6 +55,24 @@ pub enum Opcode {
     Unknown,
     Nop,
     Exit,
+    Invoke,
+    Ret,
+    BPush,
+    SPush,
+    IPush,
+    LPush,
+    Dup,
+    Dup2,
+    Pop,
+    Pop2,
+    IAdd,
+    LAdd,
+    ISub,
+    LSub,
+    IMul,
+    LMul,
+    IDiv,
+    LDiv,
 }
 
 impl Display for Opcode {
@@ -69,6 +81,24 @@ impl Display for Opcode {
             Opcode::Unknown => "unknown",
             Opcode::Nop => "nop",
             Opcode::Exit => "exit",
+            Opcode::Invoke => "invoke",
+            Opcode::Ret => "ret",
+            Opcode::BPush => "bpush",
+            Opcode::SPush => "spush",
+            Opcode::IPush => "ipush",
+            Opcode::LPush => "lpush",
+            Opcode::Dup => "dup",
+            Opcode::Dup2 => "dup2",
+            Opcode::Pop => "pop",
+            Opcode::Pop2 => "pop2",
+            Opcode::IAdd => "iadd",
+            Opcode::LAdd => "ladd",
+            Opcode::ISub => "isub",
+            Opcode::LSub => "lsub",
+            Opcode::IMul => "imul",
+            Opcode::LMul => "lmul",
+            Opcode::IDiv => "idiv",
+            Opcode::LDiv => "ldiv",
         };
 
         return write!(f, "{}", s);
@@ -80,6 +110,24 @@ impl From<u8> for Opcode {
         return match value {
             0x00 => Opcode::Nop,
             0x01 => Opcode::Exit,
+            0x02 => Opcode::Invoke,
+            0x03 => Opcode::Ret,
+            0x04 => Opcode::BPush,
+            0x05 => Opcode::SPush,
+            0x06 => Opcode::IPush,
+            0x07 => Opcode::LPush,
+            0x08 => Opcode::Dup,
+            0x09 => Opcode::Dup2,
+            0x0a => Opcode::Pop,
+            0x0b => Opcode::Pop2,
+            0x0c => Opcode::IAdd,
+            0x0d => Opcode::LAdd,
+            0x0e => Opcode::ISub,
+            0x0f => Opcode::LSub,
+            0x10 => Opcode::IMul,
+            0x11 => Opcode::LMul,
+            0x12 => Opcode::IDiv,
+            0x13 => Opcode::LDiv,
             _ => Opcode::Unknown,
         };
     }
@@ -104,50 +152,210 @@ impl Interpreter {
     }
 
     unsafe fn run(bytecode_bytes: &mut Vec<u8>) -> ExitStatus {
+        let mut is_init_succeeded = true;
+        // note: Exit Status
+        let mut es = ExitStatus::Success as u32;
+
         let bytecode_len = bytecode_bytes.len();
-        let mut bytecode_ptr = bytecode_bytes.as_mut_ptr() as *mut c_void;
+        let bytecode_ptr = bytecode_bytes.as_mut_ptr() as *mut c_void;
 
         let pool_offset = 128usize;
         let mut pool_ptr = bytecode_ptr.add(pool_offset);
 
-        let entry_point_func_index = *(bytecode_ptr.add(*(pool_ptr as *mut usize) + 1) as *mut usize);
-        let entry_point_pc = *(bytecode_ptr.add(entry_point_func_index) as *mut usize);
+        let entry_point_func_index = *(bytecode_ptr.add(*(pool_ptr as *mut usize)) as *mut usize);
+        let entry_point_pc = entry_point_func_index;
         let mut inst_ptr = bytecode_ptr.add(entry_point_pc);
+
+        if entry_point_pc >= bytecode_len {
+            is_init_succeeded = false;
+            es = ExitStatus::BytecodeAccessViolation as u32;
+        }
 
         let max_stack_size = 1024usize;
         let mut stack_ptr = malloc(max_stack_size) as *mut c_void;
 
-        // note: Exit Status
-        let es;
         // note: Stack Pointer
         let mut sp = 0usize;
+        // note: Base Pointer
+        let mut bp = 0usize;
         // note: Program Counter
         let mut pc = entry_point_pc;
         // note: Pool Pointer
         let mut pp = pool_offset;
 
-        println!("{}", pc);
+        // note: 'operator ブロック外での終了処理
+        // fix: 処理が中断されない
+        macro_rules! exit {
+            ($status_kind:expr) => {
+                {
+                    es = $status_kind as u32;
+                    is_init_succeeded = false;
+                }
+            };
+        }
 
-        // note: エントリポイント用のコールスタック要素をプッシュ
+        macro_rules! jump_to {
+            ($ptr:expr, $curr_pos:expr, $jump_to:expr, $size:expr, $err_status:expr) => {
+                {
+                    if $jump_to > $size {
+                        exit!($err_status);
+                    }
 
-        /*
-        // * リターンアドレス
-        let tmp_ptr = call_stack_ptr as *mut usize;
-        *tmp_ptr = bytecode_len - 1;
-        call_stack_ptr = call_stack_ptr.add(size_of::<usize>());
+                    $ptr = $ptr.offset($jump_to as isize - $curr_pos as isize);
+                    $curr_pos = $jump_to;
+                }
+            };
+        }
 
-        // * 引数サイズ
-        let tmp_ptr = call_stack_ptr as *mut u32;
-        *tmp_ptr = 0;
-        call_stack_ptr = call_stack_ptr.add(size_of::<u32>());
+        macro_rules! jump_prg_to {
+            ($index:expr) => {
+                jump_to!(inst_ptr, pc, $index, bytecode_len, ExitStatus::BytecodeAccessViolation)
+            };
+        }
 
-        // * スタックポインタ
-        let tmp_ptr = call_stack_ptr as *mut u32;
-        *tmp_ptr = 0;
-        call_stack_ptr = call_stack_ptr.add(size_of::<u32>());
+        macro_rules! jump_pool_to {
+            ($pool_index:expr) => {
+                {
+                    jump_to!(pool_ptr, pp, pool_offset + $pool_index * size_of::<usize>(), bytecode_len, ExitStatus::BytecodeAccessViolation);
+                    let value_addr = next_pool!(usize);
+                    jump_to!(pool_ptr, pp, value_addr, bytecode_len, ExitStatus::BytecodeAccessViolation);
+                }
+            };
+        }
 
-        csp += size_of::<usize>() + size_of::<u32>() * 2;
-        */
+        macro_rules! jump_stack_to {
+            ($index:expr) => {
+                jump_to!(stack_ptr, sp, $index, max_stack_size, ExitStatus::StackAccessViolation)
+            };
+        }
+
+        macro_rules! push {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $value:expr, $size:expr, $err_status:expr) => {
+                {
+                    let value_size = size_of::<$ty>();
+
+                    if $curr_pos + value_size > $size {
+                        exit!($err_status);
+                    }
+
+                    let tmp_ptr = $ptr as *mut $ty;
+                    *tmp_ptr = $value;
+
+                    $curr_pos += value_size;
+                    $ptr = $ptr.add(value_size);
+                }
+            };
+        }
+
+        macro_rules! stack_push {
+            ($ty:ty, $value:expr) => {
+                push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow)
+            };
+
+            ($ty:ty, $value:expr, $len:expr) => {
+                for _ in 0..$len {
+                    stack_push!($ty, $value);
+                }
+            };
+        }
+
+        macro_rules! stack_push_next_prg {
+            ($ty:ty $(as $cast_to:ty)?, $push_ty:ty) => {
+                {
+                    let value = next_prg!($ty) $(as $cast_to)?;
+                    stack_push!($push_ty, value);
+                }
+            };
+        }
+
+        macro_rules! stack_dup {
+            ($ty:ty) => {
+                {
+                    let top_value = stack_top!($ty);
+                    stack_push!($ty, top_value);
+                }
+            };
+        }
+
+        macro_rules! pop {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $err_status:expr) => {
+                {
+                    let value_size = size_of::<$ty>();
+
+                    if $curr_pos < value_size {
+                        exit!($err_status);
+                    }
+
+                    $curr_pos -= value_size;
+                    $ptr = $ptr.sub(value_size);
+
+                    *($ptr as *mut $ty)
+                }
+            };
+        }
+
+        macro_rules! stack_pop {
+            ($ty:ty) => {
+                pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation)
+            };
+
+            ($ty:ty, $len:expr) => {
+                for _ in 0..$len {
+                    stack_pop!($ty);
+                }
+            };
+        }
+
+        macro_rules! top {
+            ($ptr:expr, $counter:expr, $ty:ty, $err_status:expr) => {
+                {
+                    let value_size = size_of::<$ty>();
+
+                    if $counter < value_size {
+                        exit!($err_status);
+                    }
+
+                    *($ptr as *mut $ty).sub(1)
+                }
+            };
+        }
+
+        macro_rules! stack_top {
+            ($ty:ty) => {
+                top!(stack_ptr, sp, $ty, ExitStatus::StackOverflow)
+            };
+        }
+
+        macro_rules! next {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $size:expr, $err_status:expr) => {
+                {
+                    let value_size = size_of::<$ty>();
+
+                    if $curr_pos + value_size > $size {
+                        exit!($err_status);
+                    }
+
+                    let tmp_ptr = $ptr as *mut $ty;
+                    let value = *tmp_ptr;
+                    $ptr = (tmp_ptr as *mut c_void).add(value_size);
+                    $curr_pos += value_size;
+
+                    value
+                }
+            };
+        }
+
+        macro_rules! next_prg {
+            ($ty:ty) => {
+                next!(inst_ptr, pc, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
+            };
+        }
+
+        macro_rules! next_pool {
+            ($ty:ty) => {
+                next!(pool_ptr, pp, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
+            };
+        }
 
         macro_rules! raw_ptr_to_string {
             ($ptr:expr, $size:expr) => {
@@ -171,53 +379,149 @@ impl Interpreter {
             };
         }
 
-        'operator: loop {
-            macro_rules! next {
-                ($ptr:expr, $curr_pos:expr, $ty:ty, $size:expr, $err_status:expr) => {
-                    {
-                        let value_size = size_of::<$ty>();
+        macro_rules! calc {
+            ($ty:ty, $f:ident$(, $check_divide_by_zero:expr)?) => {
+                {
+                    let right_term = stack_pop!($ty);
+                    let left_term = stack_pop!($ty);
 
-                        if $curr_pos + value_size > $size {
-                            exit!($err_status);
+                    $(
+                        if $check_divide_by_zero && right_term == 0 {
+                            exit!(ExitStatus::DivideByZero);
+                        }
+                    )?
+
+                    let (value, overflowed) = left_term.$f(right_term);
+
+                    if overflowed {
+                        exit!(ExitStatus::ArithmeticOverflow);
+                    }
+
+                    stack_push!($ty, value);
+                }
+            };
+        }
+
+        if is_init_succeeded {
+            // note: エントリポイント用のコールスタック要素をプッシュ
+            // * ベースポインタ
+            stack_push!(usize, 0);
+            // * リターンアドレス
+            stack_push!(usize, bytecode_len - 1);
+
+            'operator: loop {
+                // note: 'operator ブロック内での終了処理
+                macro_rules! exit {
+                    ($status_kind:expr) => {
+                        {
+                            es = $status_kind as u32;
+                            break 'operator;
+                        }
+                    };
+                }
+
+                let tmp_pc = pc;
+                let opcode = next_prg!(u8);
+                let opcode_kind = Opcode::from(opcode);
+
+                println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind.to_string().to_uppercase(), opcode, tmp_pc).blue());
+                println!("{}", raw_ptr_to_string!(stack_ptr.sub(sp), sp).bright_black());
+                println!();
+
+                match opcode_kind {
+                    Opcode::Nop => (),
+                    Opcode::Exit => exit!(ExitStatus::Success),
+                    Opcode::Invoke => {
+                        let pool_i = next_prg!(usize);
+                        jump_pool_to!(pool_i);
+                        let start_addr = next_pool!(usize);
+                        let var_len = next_pool!(u16) as usize;
+                        let arg_len = next_pool!(u8) as usize;
+
+                        if var_len < arg_len {
+                            exit!(ExitStatus::StackAccessViolation);
                         }
 
-                        let tmp_ptr = $ptr as *mut $ty;
-                        let value = *tmp_ptr;
-                        $ptr = (tmp_ptr as *mut c_void).add(value_size);
-                        $curr_pos += value_size;
+                        if sp < arg_len * size_of::<u32>() {
+                            exit!(ExitStatus::StackAccessViolation);
+                        }
 
-                        value
-                    }
-                };
-            }
+                        // note: 引数値を事前にポップ
+                        let mut args = Vec::<u32>::new();
 
-            macro_rules! next_prg {
-                ($ty:ty) => {
-                    next!(inst_ptr, pc, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
-                };
-            }
+                        for i in 0..arg_len {
+                            let new_arg = *((stack_ptr as *mut u32).sub(arg_len - i));
+                            args.push(new_arg);
+                        }
 
-            macro_rules! exit {
-                ($status_kind:expr) => {
-                    {
-                        es = $status_kind as u32;
-                        break 'operator;
-                    }
-                };
-            }
+                        stack_pop!(u32, arg_len);
 
-            let tmp_pc = pc;
-            let opcode = next_prg!(u8);
-            let opcode_kind = Opcode::from(opcode);
+                        // note: bp をプッシュ & 設定
+                        let new_bp = sp;
+                        stack_push!(usize, bp);
+                        bp = new_bp;
 
-            println!("{}", format!("{} (0x{:0x} at 0x{:0x})", opcode_kind.to_string().to_uppercase(), opcode, tmp_pc).blue());
-            println!("{}", raw_ptr_to_string!(stack_ptr.sub(sp), sp).bright_black());
-            println!();
+                        // note: リターンアドレスをプッシュ
+                        let ret_addr = pc;
+                        stack_push!(usize, ret_addr);
 
-            match opcode_kind {
-                Opcode::Nop => (),
-                Opcode::Exit => exit!(ExitStatus::Success),
-                Opcode::Unknown => exit!(ExitStatus::UnknownOpcode),
+                        // note: 引数をプッシュ
+                        for each_arg in args {
+                            stack_push!(u32, each_arg);
+                        }
+
+                        // note: 引数の要素分 (self 参照含む) をスキップ
+                        jump_stack_to!(sp + (var_len - arg_len) * size_of::<u32>());
+
+                        // note: 開始アドレスにジャンプ
+                        jump_prg_to!(start_addr);
+
+                        println!("{}", format!("[pool index 0x{:0x} / start at 0x{:0x} / return to 0x{:0x} / {} arguments]", pool_i, start_addr, ret_addr, arg_len).bright_green().dimmed());
+                        println!();
+                    },
+                    Opcode::Ret => {
+                        // note: オペランドスタックと変数テーブルをポップ
+                        let (init_stack_elem_size, is_overflowed1) = sp.overflowing_sub(bp);
+                        let (pop_size, is_overflowed2) = init_stack_elem_size.overflowing_sub(size_of::<usize>() * 2);
+
+                        if is_overflowed1 || is_overflowed2 {
+                            exit!(ExitStatus::StackAccessViolation);
+                        }
+
+                        stack_pop!(u8, pop_size);
+
+                        // note: pc 設定
+                        let ret_addr = stack_pop!(usize);
+                        jump_prg_to!(ret_addr);
+
+                        // note: bp 設定
+                        bp = stack_pop!(usize);
+
+                        println!("{}", format!("[return to 0x{:0x} / pop {} bytes / return void]", ret_addr, pop_size).bright_green().dimmed());
+                        println!();
+                    },
+                    Opcode::BPush => stack_push_next_prg!(u8 as u32, u32),
+                    Opcode::SPush => stack_push_next_prg!(u16 as u32, u32),
+                    Opcode::IPush => stack_push_next_prg!(u32, u32),
+                    Opcode::LPush => stack_push_next_prg!(u64, u64),
+                    Opcode::Dup => stack_dup!(u32),
+                    Opcode::Dup2 => stack_dup!(u64),
+                    Opcode::Pop => {
+                        let _ = stack_pop!(u32);
+                    },
+                    Opcode::Pop2 => {
+                        let _ = stack_pop!(u64);
+                    },
+                    Opcode::IAdd => calc!(u32, overflowing_add),
+                    Opcode::LAdd => calc!(u64, overflowing_add),
+                    Opcode::ISub => calc!(u32, overflowing_sub),
+                    Opcode::LSub => calc!(u64, overflowing_sub),
+                    Opcode::IMul => calc!(u32, overflowing_mul),
+                    Opcode::LMul => calc!(u64, overflowing_mul),
+                    Opcode::IDiv => calc!(u32, overflowing_div, true),
+                    Opcode::LDiv => calc!(u64, overflowing_div, true),
+                    Opcode::Unknown => exit!(ExitStatus::UnknownOpcode),
+                }
             }
         }
 
