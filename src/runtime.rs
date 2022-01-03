@@ -192,16 +192,16 @@ impl Interpreter {
         // note: 'operator ブロック外での終了処理
         // fix: 処理が中断されない
         macro_rules! exit {
-            ($status_kind:expr) => {
+            ($status_kind:ident) => {
                 {
-                    es = $status_kind as u32;
+                    es = ExitStatus::$status_kind as u32;
                     is_init_succeeded = false;
                 }
             };
         }
 
         macro_rules! jump_to {
-            ($ptr:expr, $curr_pos:expr, $jump_to:expr, $size:expr, $err_status:expr) => {
+            ($ptr:expr, $curr_pos:expr, $jump_to:expr, $size:expr, $err_status:ident) => {
                 {
                     if $jump_to > $size {
                         exit!($err_status);
@@ -215,28 +215,28 @@ impl Interpreter {
 
         macro_rules! jump_prg_to {
             ($index:expr) => {
-                jump_to!(inst_ptr, pc, $index, bytecode_len, ExitStatus::BytecodeAccessViolation)
+                jump_to!(inst_ptr, pc, $index, bytecode_len, BytecodeAccessViolation)
             };
         }
 
         macro_rules! jump_pool_to {
             ($pool_index:expr) => {
                 {
-                    jump_to!(pool_ptr, pp, pool_offset + $pool_index * size_of::<usize>(), bytecode_len, ExitStatus::BytecodeAccessViolation);
+                    jump_to!(pool_ptr, pp, pool_offset + $pool_index * size_of::<usize>(), bytecode_len, BytecodeAccessViolation);
                     let value_addr = next_pool!(usize);
-                    jump_to!(pool_ptr, pp, value_addr, bytecode_len, ExitStatus::BytecodeAccessViolation);
+                    jump_to!(pool_ptr, pp, value_addr, bytecode_len, BytecodeAccessViolation);
                 }
             };
         }
 
         macro_rules! jump_stack_to {
             ($index:expr) => {
-                jump_to!(stack_ptr, sp, $index, max_stack_size, ExitStatus::StackAccessViolation)
+                jump_to!(stack_ptr, sp, $index, max_stack_size, StackAccessViolation)
             };
         }
 
         macro_rules! push {
-            ($ptr:expr, $curr_pos:expr, $ty:ty, $value:expr, $size:expr, $err_status:expr) => {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $value:expr, $size:expr, $err_status:ident) => {
                 {
                     let value_size = size_of::<$ty>();
 
@@ -255,7 +255,7 @@ impl Interpreter {
 
         macro_rules! stack_push {
             ($ty:ty, $value:expr) => {
-                push!(stack_ptr, sp, $ty, $value, max_stack_size, ExitStatus::StackOverflow)
+                push!(stack_ptr, sp, $ty, $value, max_stack_size, StackOverflow)
             };
 
             ($ty:ty, $value:expr, $len:expr) => {
@@ -284,7 +284,7 @@ impl Interpreter {
         }
 
         macro_rules! pop {
-            ($ptr:expr, $curr_pos:expr, $ty:ty, $err_status:expr) => {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $err_status:ident) => {
                 {
                     let value_size = size_of::<$ty>();
 
@@ -302,7 +302,7 @@ impl Interpreter {
 
         macro_rules! stack_pop {
             ($ty:ty) => {
-                pop!(stack_ptr, sp, $ty, ExitStatus::StackAccessViolation)
+                pop!(stack_ptr, sp, $ty, StackAccessViolation)
             };
 
             ($ty:ty, $len:expr) => {
@@ -316,13 +316,13 @@ impl Interpreter {
             ($ty:ty, $var_index:expr) => {
                 {
                     if sp < bp + size_of::<usize>() * 2 {
-                        exit!(ExitStatus::StackAccessViolation);
+                        exit!(StackAccessViolation);
                     }
 
                     let var_table_top_diff = sp - bp - size_of::<usize>() * 2;
 
                     if var_table_top_diff < size_of::<u32>() * $var_index as usize + size_of::<$ty>() {
-                        exit!(ExitStatus::StackAccessViolation);
+                        exit!(StackAccessViolation);
                     }
 
                     let var_table_top = stack_ptr.sub(var_table_top_diff) as *mut u32;
@@ -333,7 +333,7 @@ impl Interpreter {
         }
 
         macro_rules! top {
-            ($ptr:expr, $counter:expr, $ty:ty, $err_status:expr) => {
+            ($ptr:expr, $counter:expr, $ty:ty, $err_status:ident) => {
                 {
                     let value_size = size_of::<$ty>();
 
@@ -348,12 +348,12 @@ impl Interpreter {
 
         macro_rules! stack_top {
             ($ty:ty) => {
-                top!(stack_ptr, sp, $ty, ExitStatus::StackOverflow)
+                top!(stack_ptr, sp, $ty, StackOverflow)
             };
         }
 
         macro_rules! next {
-            ($ptr:expr, $curr_pos:expr, $ty:ty, $size:expr, $err_status:expr) => {
+            ($ptr:expr, $curr_pos:expr, $ty:ty, $size:expr, $err_status:ident) => {
                 {
                     let value_size = size_of::<$ty>();
 
@@ -373,13 +373,13 @@ impl Interpreter {
 
         macro_rules! next_prg {
             ($ty:ty) => {
-                next!(inst_ptr, pc, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
+                next!(inst_ptr, pc, $ty, bytecode_len, BytecodeAccessViolation)
             };
         }
 
         macro_rules! next_pool {
             ($ty:ty) => {
-                next!(pool_ptr, pp, $ty, bytecode_len, ExitStatus::BytecodeAccessViolation)
+                next!(pool_ptr, pp, $ty, bytecode_len, BytecodeAccessViolation)
             };
         }
 
@@ -413,14 +413,14 @@ impl Interpreter {
 
                     $(
                         if $check_divide_by_zero && right_term == 0 {
-                            exit!(ExitStatus::DivideByZero);
+                            exit!(DivideByZero);
                         }
                     )?
 
                     let (value, overflowing) = left_term.$f(right_term);
 
                     if overflowing {
-                        exit!(ExitStatus::ArithmeticOverflow);
+                        exit!(ArithmeticOverflow);
                     }
 
                     stack_push!($ty, value);
@@ -438,9 +438,9 @@ impl Interpreter {
             'operator: loop {
                 // note: 'operator ブロック内での終了処理
                 macro_rules! exit {
-                    ($status_kind:expr) => {
+                    ($status_kind:ident) => {
                         {
-                            es = $status_kind as u32;
+                            es = ExitStatus::$status_kind as u32;
                             break 'operator;
                         }
                     };
@@ -456,7 +456,7 @@ impl Interpreter {
 
                 match opcode_kind {
                     Opcode::Nop => (),
-                    Opcode::Exit => exit!(ExitStatus::Success),
+                    Opcode::Exit => exit!(Success),
                     Opcode::Invoke => {
                         let pool_i = next_prg!(usize);
                         jump_pool_to!(pool_i);
@@ -465,7 +465,7 @@ impl Interpreter {
                         let arg_len = next_pool!(u8) as usize;
 
                         if var_len < arg_len || sp < arg_len * size_of::<u32>() {
-                            exit!(ExitStatus::StackAccessViolation);
+                            exit!(StackAccessViolation);
                         }
 
                         // note: 引数値を事前にポップ
@@ -503,7 +503,7 @@ impl Interpreter {
                     },
                     Opcode::Ret => {
                         if sp < bp || sp - bp < size_of::<usize>() * 2 {
-                            exit!(ExitStatus::StackAccessViolation);
+                            exit!(StackAccessViolation);
                         }
 
                         // note: オペランドスタックと変数テーブルをポップ
@@ -548,7 +548,7 @@ impl Interpreter {
                     Opcode::LMul => calc!(u64, overflowing_mul),
                     Opcode::IDiv => calc!(u32, overflowing_div, true),
                     Opcode::LDiv => calc!(u64, overflowing_div, true),
-                    Opcode::Unknown => exit!(ExitStatus::UnknownOpcode),
+                    Opcode::Unknown => exit!(UnknownOpcode),
                 }
             }
         }
