@@ -65,6 +65,8 @@ pub enum Opcode {
     Dup2,
     Pop,
     Pop2,
+    ILoad,
+    LLoad,
     IAdd,
     LAdd,
     ISub,
@@ -91,6 +93,8 @@ impl Display for Opcode {
             Opcode::Dup2 => "dup2",
             Opcode::Pop => "pop",
             Opcode::Pop2 => "pop2",
+            Opcode::ILoad => "iload",
+            Opcode::LLoad => "lload",
             Opcode::IAdd => "iadd",
             Opcode::LAdd => "ladd",
             Opcode::ISub => "isub",
@@ -120,14 +124,16 @@ impl From<u8> for Opcode {
             0x09 => Opcode::Dup2,
             0x0a => Opcode::Pop,
             0x0b => Opcode::Pop2,
-            0x0c => Opcode::IAdd,
-            0x0d => Opcode::LAdd,
-            0x0e => Opcode::ISub,
-            0x0f => Opcode::LSub,
-            0x10 => Opcode::IMul,
-            0x11 => Opcode::LMul,
-            0x12 => Opcode::IDiv,
-            0x13 => Opcode::LDiv,
+            0x0c => Opcode::ILoad,
+            0x0d => Opcode::LLoad,
+            0x0e => Opcode::IAdd,
+            0x0f => Opcode::LAdd,
+            0x10 => Opcode::ISub,
+            0x11 => Opcode::LSub,
+            0x12 => Opcode::IMul,
+            0x13 => Opcode::LMul,
+            0x14 => Opcode::IDiv,
+            0x15 => Opcode::LDiv,
             _ => Opcode::Unknown,
         };
     }
@@ -306,6 +312,26 @@ impl Interpreter {
             };
         }
 
+        macro_rules! load {
+            ($ty:ty, $var_index:expr) => {
+                {
+                    if sp < bp + size_of::<usize>() * 2 {
+                        exit!(ExitStatus::StackAccessViolation);
+                    }
+
+                    let var_table_top_diff = sp - bp - size_of::<usize>() * 2;
+
+                    if var_table_top_diff < size_of::<u32>() * ($var_index as usize + 1) {
+                        exit!(ExitStatus::StackAccessViolation);
+                    }
+
+                    let var_table_top = stack_ptr.sub(var_table_top_diff) as *mut u32;
+                    let value = *(var_table_top.add($var_index as usize) as *mut $ty);
+                    stack_push!($ty, value);
+                }
+            };
+        }
+
         macro_rules! top {
             ($ptr:expr, $counter:expr, $ty:ty, $err_status:expr) => {
                 {
@@ -402,6 +428,20 @@ impl Interpreter {
             };
         }
 
+        macro_rules! check_overflowing_sub {
+            ($value1:expr, $value2:expr, $exit_status:expr) => {
+                {
+                    let (result, is_overflowing) = $value1.overflowing_sub($value2);
+
+                    if is_overflowing {
+                        exit!($exit_status);
+                    }
+
+                    result
+                }
+            };
+        }
+
         if is_init_succeeded {
             // note: エントリポイント用のコールスタック要素をプッシュ
             // * ベースポインタ
@@ -471,7 +511,8 @@ impl Interpreter {
                         }
 
                         // note: 引数の要素分 (self 参照含む) をスキップ
-                        jump_stack_to!(sp + (var_len - arg_len) * size_of::<u32>());
+                        // jump_stack_to!(sp + (var_len - arg_len) * size_of::<u32>());
+                        stack_push!(u64, 0xffffffffeeeeeeee);
 
                         // note: 開始アドレスにジャンプ
                         jump_prg_to!(start_addr);
@@ -512,6 +553,8 @@ impl Interpreter {
                     Opcode::Pop2 => {
                         let _ = stack_pop!(u64);
                     },
+                    Opcode::ILoad => {let a = next_prg!(u16);load!(u32, a)},
+                    Opcode::LLoad => load!(u64, next_prg!(u16)),
                     Opcode::IAdd => calc!(u32, overflowing_add),
                     Opcode::LAdd => calc!(u64, overflowing_add),
                     Opcode::ISub => calc!(u32, overflowing_sub),
