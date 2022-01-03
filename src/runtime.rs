@@ -65,8 +65,10 @@ pub enum Opcode {
     Dup2,
     Pop,
     Pop2,
-    ILoad,
-    LLoad,
+    Load,
+    Load2,
+    Store,
+    Store2,
     IAdd,
     LAdd,
     ISub,
@@ -93,8 +95,10 @@ impl Display for Opcode {
             Opcode::Dup2 => "dup2",
             Opcode::Pop => "pop",
             Opcode::Pop2 => "pop2",
-            Opcode::ILoad => "iload",
-            Opcode::LLoad => "lload",
+            Opcode::Load => "load",
+            Opcode::Load2 => "load2",
+            Opcode::Store => "store",
+            Opcode::Store2 => "store2",
             Opcode::IAdd => "iadd",
             Opcode::LAdd => "ladd",
             Opcode::ISub => "isub",
@@ -124,16 +128,18 @@ impl From<u8> for Opcode {
             0x09 => Opcode::Dup2,
             0x0a => Opcode::Pop,
             0x0b => Opcode::Pop2,
-            0x0c => Opcode::ILoad,
-            0x0d => Opcode::LLoad,
-            0x0e => Opcode::IAdd,
-            0x0f => Opcode::LAdd,
-            0x10 => Opcode::ISub,
-            0x11 => Opcode::LSub,
-            0x12 => Opcode::IMul,
-            0x13 => Opcode::LMul,
-            0x14 => Opcode::IDiv,
-            0x15 => Opcode::LDiv,
+            0x0c => Opcode::Load,
+            0x0d => Opcode::Load2,
+            0x0e => Opcode::Store,
+            0x0f => Opcode::Store2,
+            0x10 => Opcode::IAdd,
+            0x11 => Opcode::LAdd,
+            0x12 => Opcode::ISub,
+            0x13 => Opcode::LSub,
+            0x14 => Opcode::IMul,
+            0x15 => Opcode::LMul,
+            0x16 => Opcode::IDiv,
+            0x17 => Opcode::LDiv,
             _ => Opcode::Unknown,
         };
     }
@@ -312,23 +318,41 @@ impl Interpreter {
             };
         }
 
-        macro_rules! load {
-            ($ty:ty, $var_index:expr) => {
+        macro_rules! var_table_diff {
+            ($ty:ty, $var_i:expr) => {
                 {
+                    // note: ベースポインタ以前の値にアクセスしないようチェック
                     if sp < bp + size_of::<usize>() * 2 {
                         exit!(StackAccessViolation);
                     }
 
-                    let var_table_top_diff = sp - bp - size_of::<usize>() * 2;
+                    let diff = sp - bp - size_of::<usize>() * 2;
 
-                    if var_table_top_diff < size_of::<u32>() * $var_index as usize + size_of::<$ty>() {
+                    // note: スタックポインタ以降の値にアクセスしないようチェック
+                    if diff < size_of::<u32>() * $var_i as usize + size_of::<$ty>() {
                         exit!(StackAccessViolation);
                     }
 
-                    let var_table_top = stack_ptr.sub(var_table_top_diff) as *mut u32;
-                    let value = *(var_table_top.add($var_index as usize) as *mut $ty);
-                    stack_push!($ty, value);
+                    diff - $var_i as usize * size_of::<u32>()
                 }
+            };
+        }
+
+        macro_rules! load {
+            ($ty:ty, $var_i:expr) => {
+                {
+                    let diff = var_table_diff!($ty, $var_i);
+                    let value = stack_ptr.sub(diff) as *mut $ty;
+                    stack_push!($ty, *value);
+                }
+            };
+        }
+
+        macro_rules! store {
+            ($ty:ty, $var_i:expr, $value:expr) => {
+                let diff = var_table_diff!($ty, $var_i);
+                let ptr = stack_ptr.sub(diff) as *mut $ty;
+                *ptr = $value
             };
         }
 
@@ -532,13 +556,23 @@ impl Interpreter {
                     Opcode::Pop2 => {
                         let _ = stack_pop!(u64);
                     },
-                    Opcode::ILoad => {
+                    Opcode::Load => {
                         let var_i = next_prg!(u16);
-                        load!(u32, var_i)
+                        load!(u32, var_i);
                     },
-                    Opcode::LLoad => {
+                    Opcode::Load2 => {
                         let var_i = next_prg!(u16);
-                        load!(u64, var_i)
+                        load!(u64, var_i);
+                    },
+                    Opcode::Store => {
+                        let var_i = next_prg!(u16);
+                        let value = stack_pop!(u32);
+                        store!(u32, var_i, value);
+                    },
+                    Opcode::Store2 => {
+                        let var_i = next_prg!(u16);
+                        let value = stack_pop!(u64);
+                        store!(u64, var_i, value);
                     },
                     Opcode::IAdd => calc!(u32, overflowing_add),
                     Opcode::LAdd => calc!(u64, overflowing_add),
