@@ -321,7 +321,7 @@ impl Interpreter {
 
                     let var_table_top_diff = sp - bp - size_of::<usize>() * 2;
 
-                    if var_table_top_diff < size_of::<u32>() * ($var_index as usize + 1) {
+                    if var_table_top_diff < size_of::<u32>() * $var_index as usize + size_of::<$ty>() {
                         exit!(ExitStatus::StackAccessViolation);
                     }
 
@@ -532,8 +532,14 @@ impl Interpreter {
                     Opcode::Pop2 => {
                         let _ = stack_pop!(u64);
                     },
-                    Opcode::ILoad => {let a = next_prg!(u16);load!(u32, a)},
-                    Opcode::LLoad => load!(u64, next_prg!(u16)),
+                    Opcode::ILoad => {
+                        let var_i = next_prg!(u16);
+                        load!(u32, var_i)
+                    },
+                    Opcode::LLoad => {
+                        let var_i = next_prg!(u16);
+                        load!(u64, var_i)
+                    },
                     Opcode::IAdd => calc!(u32, overflowing_add),
                     Opcode::LAdd => calc!(u64, overflowing_add),
                     Opcode::ISub => calc!(u32, overflowing_sub),
