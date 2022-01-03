@@ -417,27 +417,13 @@ impl Interpreter {
                         }
                     )?
 
-                    let (value, overflowed) = left_term.$f(right_term);
+                    let (value, overflowing) = left_term.$f(right_term);
 
-                    if overflowed {
+                    if overflowing {
                         exit!(ExitStatus::ArithmeticOverflow);
                     }
 
                     stack_push!($ty, value);
-                }
-            };
-        }
-
-        macro_rules! check_overflowing_sub {
-            ($value1:expr, $value2:expr, $exit_status:expr) => {
-                {
-                    let (result, is_overflowing) = $value1.overflowing_sub($value2);
-
-                    if is_overflowing {
-                        exit!($exit_status);
-                    }
-
-                    result
                 }
             };
         }
@@ -478,11 +464,7 @@ impl Interpreter {
                         let var_len = next_pool!(u16) as usize;
                         let arg_len = next_pool!(u8) as usize;
 
-                        if var_len < arg_len {
-                            exit!(ExitStatus::StackAccessViolation);
-                        }
-
-                        if sp < arg_len * size_of::<u32>() {
+                        if var_len < arg_len || sp < arg_len * size_of::<u32>() {
                             exit!(ExitStatus::StackAccessViolation);
                         }
 
@@ -511,8 +493,7 @@ impl Interpreter {
                         }
 
                         // note: 引数の要素分 (self 参照含む) をスキップ
-                        // jump_stack_to!(sp + (var_len - arg_len) * size_of::<u32>());
-                        stack_push!(u64, 0xffffffffeeeeeeee);
+                        jump_stack_to!(sp + (var_len - arg_len) * size_of::<u32>());
 
                         // note: 開始アドレスにジャンプ
                         jump_prg_to!(start_addr);
@@ -521,14 +502,12 @@ impl Interpreter {
                         println!();
                     },
                     Opcode::Ret => {
-                        // note: オペランドスタックと変数テーブルをポップ
-                        let (init_stack_elem_size, is_overflowed1) = sp.overflowing_sub(bp);
-                        let (pop_size, is_overflowed2) = init_stack_elem_size.overflowing_sub(size_of::<usize>() * 2);
-
-                        if is_overflowed1 || is_overflowed2 {
+                        if sp < bp || sp - bp < size_of::<usize>() * 2 {
                             exit!(ExitStatus::StackAccessViolation);
                         }
 
+                        // note: オペランドスタックと変数テーブルをポップ
+                        let pop_size = sp - bp - size_of::<usize>() * 2;
                         stack_pop!(u8, pop_size);
 
                         // note: pc 設定
