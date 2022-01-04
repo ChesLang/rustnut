@@ -8,6 +8,10 @@ use colored::*;
 
 use libc::{c_void, malloc, free, write};
 
+use num::FromPrimitive;
+use num_derive::*;
+
+#[derive(FromPrimitive)]
 pub enum ExitStatus {
     Success,
     UnknownOpcode,
@@ -42,21 +46,14 @@ impl Display for ExitStatus {
 
 impl From<u32> for ExitStatus {
     fn from(v: u32) -> ExitStatus {
-        return match v {
-            0 => ExitStatus::Success,
-            1 => ExitStatus::UnknownOpcode,
-            2 => ExitStatus::UnknownCallNumber,
-            3 => ExitStatus::BytecodeAccessViolation,
-            4 => ExitStatus::StackOverflow,
-            5 => ExitStatus::StackAccessViolation,
-            6 => ExitStatus::ArrayAccessViolation,
-            7 => ExitStatus::ArithmeticOverflow,
-            8 => ExitStatus::DivideByZero,
-            _ => ExitStatus::Unknown,
+        return match FromPrimitive::from_u32(v) {
+            Some(e) => e,
+            None => ExitStatus::Unknown,
         };
     }
 }
 
+#[derive(FromPrimitive)]
 pub enum Opcode {
     Unknown,
     Nop,
@@ -148,48 +145,17 @@ impl Display for Opcode {
 }
 
 impl From<u8> for Opcode {
-    fn from(value: u8) -> Opcode {
-        return match value {
-            0x00 => Opcode::Nop,
-            0x01 => Opcode::Exit,
-            0x02 => Opcode::Call,
-            0x03 => Opcode::Invoke,
-            0x04 => Opcode::Ret,
-            0x05 => Opcode::IAPush,
-            0x06 => Opcode::LAPush,
-            0x07 => Opcode::BPush,
-            0x08 => Opcode::SPush,
-            0x09 => Opcode::IPush,
-            0x0a => Opcode::LPush,
-            0x0b => Opcode::Dup,
-            0x0c => Opcode::Dup2,
-            0x0d => Opcode::Pop,
-            0x0e => Opcode::Pop2,
-            0x0f => Opcode::Load,
-            0x10 => Opcode::Load2,
-            0x11 => Opcode::IALoad,
-            0x12 => Opcode::LALoad,
-            0x13 => Opcode::Store,
-            0x14 => Opcode::Store2,
-            0x15 => Opcode::Drop,
-            0x16 => Opcode::IAdd,
-            0x17 => Opcode::LAdd,
-            0x18 => Opcode::ISub,
-            0x19 => Opcode::LSub,
-            0x1a => Opcode::IMul,
-            0x1b => Opcode::LMul,
-            0x1c => Opcode::IDiv,
-            0x1d => Opcode::LDiv,
-            0x1e => Opcode::IEq,
-            0x1f => Opcode::LEq,
-            0x20 => Opcode::IOrd,
-            0x21 => Opcode::LOrd,
-            0x22 => Opcode::IEqOrd,
-            0x23 => Opcode::LEqOrd,
-            0x24 => Opcode::Goto,
-            0x25 => Opcode::If,
-            _ => Opcode::Unknown,
+    fn from(v: u8) -> Opcode {
+        return match FromPrimitive::from_u8(v + 1) {
+            Some(e) => e,
+            None => Opcode::Unknown,
         };
+    }
+}
+
+impl Into<u8> for Opcode {
+    fn into(self) -> u8 {
+        return (self as u8) - 1;
     }
 }
 
