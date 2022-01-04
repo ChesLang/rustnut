@@ -6,11 +6,12 @@ use crate::bytecode::*;
 
 use colored::*;
 
-use libc::{c_void, malloc, free};
+use libc::{c_void, malloc, free, write};
 
 pub enum ExitStatus {
     Success,
     UnknownOpcode,
+    UnknownCallNumber,
     BytecodeAccessViolation,
     StackOverflow,
     StackAccessViolation,
@@ -24,6 +25,7 @@ impl Display for ExitStatus {
         let s = match self {
             ExitStatus::Success => "SUCCESS",
             ExitStatus::UnknownOpcode => "UNKNOWN_OPCODE",
+            ExitStatus::UnknownCallNumber => "UNKNOWN_CALL_NUMBER",
             ExitStatus::BytecodeAccessViolation => "BYTECODE_ACCESS_VIOLATION",
             ExitStatus::StackOverflow => "STACK_OVERFLOW",
             ExitStatus::StackAccessViolation => "STACK_ACCESS_VIOLATION",
@@ -41,11 +43,12 @@ impl From<u32> for ExitStatus {
         return match v {
             0 => ExitStatus::Success,
             1 => ExitStatus::UnknownOpcode,
-            2 => ExitStatus::BytecodeAccessViolation,
-            3 => ExitStatus::StackOverflow,
-            4 => ExitStatus::StackAccessViolation,
-            5 => ExitStatus::ArithmeticOverflow,
-            6 => ExitStatus::DivideByZero,
+            2 => ExitStatus::UnknownCallNumber,
+            3 => ExitStatus::BytecodeAccessViolation,
+            4 => ExitStatus::StackOverflow,
+            5 => ExitStatus::StackAccessViolation,
+            6 => ExitStatus::ArithmeticOverflow,
+            7 => ExitStatus::DivideByZero,
             _ => ExitStatus::Unknown,
         };
     }
@@ -55,6 +58,7 @@ pub enum Opcode {
     Unknown,
     Nop,
     Exit,
+    Call,
     Invoke,
     Ret,
     BPush,
@@ -93,6 +97,7 @@ impl Display for Opcode {
             Opcode::Unknown => "unknown",
             Opcode::Nop => "nop",
             Opcode::Exit => "exit",
+            Opcode::Call => "call",
             Opcode::Invoke => "invoke",
             Opcode::Ret => "ret",
             Opcode::BPush => "bpush",
@@ -134,36 +139,37 @@ impl From<u8> for Opcode {
         return match value {
             0x00 => Opcode::Nop,
             0x01 => Opcode::Exit,
-            0x02 => Opcode::Invoke,
-            0x03 => Opcode::Ret,
-            0x04 => Opcode::BPush,
-            0x05 => Opcode::SPush,
-            0x06 => Opcode::IPush,
-            0x07 => Opcode::LPush,
-            0x08 => Opcode::Dup,
-            0x09 => Opcode::Dup2,
-            0x0a => Opcode::Pop,
-            0x0b => Opcode::Pop2,
-            0x0c => Opcode::Load,
-            0x0d => Opcode::Load2,
-            0x0e => Opcode::Store,
-            0x0f => Opcode::Store2,
-            0x10 => Opcode::IAdd,
-            0x11 => Opcode::LAdd,
-            0x12 => Opcode::ISub,
-            0x13 => Opcode::LSub,
-            0x14 => Opcode::IMul,
-            0x15 => Opcode::LMul,
-            0x16 => Opcode::IDiv,
-            0x17 => Opcode::LDiv,
-            0x18 => Opcode::IEq,
-            0x19 => Opcode::LEq,
-            0x1a => Opcode::IOrd,
-            0x1b => Opcode::LOrd,
-            0x1c => Opcode::IEqOrd,
-            0x1d => Opcode::LEqOrd,
-            0x1e => Opcode::Goto,
-            0x1f => Opcode::If,
+            0x02 => Opcode::Call,
+            0x03 => Opcode::Invoke,
+            0x04 => Opcode::Ret,
+            0x05 => Opcode::BPush,
+            0x06 => Opcode::SPush,
+            0x07 => Opcode::IPush,
+            0x08 => Opcode::LPush,
+            0x09 => Opcode::Dup,
+            0x0a => Opcode::Dup2,
+            0x0b => Opcode::Pop,
+            0x0c => Opcode::Pop2,
+            0x0d => Opcode::Load,
+            0x0e => Opcode::Load2,
+            0x0f => Opcode::Store,
+            0x10 => Opcode::Store2,
+            0x11 => Opcode::IAdd,
+            0x12 => Opcode::LAdd,
+            0x13 => Opcode::ISub,
+            0x14 => Opcode::LSub,
+            0x15 => Opcode::IMul,
+            0x16 => Opcode::LMul,
+            0x17 => Opcode::IDiv,
+            0x18 => Opcode::LDiv,
+            0x19 => Opcode::IEq,
+            0x1a => Opcode::LEq,
+            0x1b => Opcode::IOrd,
+            0x1c => Opcode::LOrd,
+            0x1d => Opcode::IEqOrd,
+            0x1e => Opcode::LEqOrd,
+            0x1f => Opcode::Goto,
+            0x20 => Opcode::If,
             _ => Opcode::Unknown,
         };
     }
@@ -547,6 +553,18 @@ impl Interpreter {
                 match opcode_kind {
                     Opcode::Nop => (),
                     Opcode::Exit => exit!(Success),
+                    Opcode::Call => {
+                        let code = next_prg!(u8);
+
+                        match code {
+                            0x00 => {
+                                println!("{}", "[console output]".bright_black());
+                                write(1, stack_ptr.sub(size_of::<usize>()), size_of::<usize>() as u32);
+                                println!();
+                            },
+                            _ => exit!(UnknownCallNumber),
+                        }
+                    },
                     Opcode::Invoke => {
                         let pool_i = next_prg!(usize);
                         jump_pool_to!(pool_i);
