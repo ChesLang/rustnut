@@ -15,6 +15,7 @@ pub enum ExitStatus {
     BytecodeAccessViolation,
     StackOverflow,
     StackAccessViolation,
+    ArrayAccessViolation,
     ArithmeticOverflow,
     DivideByZero,
     Unknown,
@@ -29,6 +30,7 @@ impl Display for ExitStatus {
             ExitStatus::BytecodeAccessViolation => "BYTECODE_ACCESS_VIOLATION",
             ExitStatus::StackOverflow => "STACK_OVERFLOW",
             ExitStatus::StackAccessViolation => "STACK_ACCESS_VIOLATION",
+            ExitStatus::ArrayAccessViolation => "ARRAY_ACCESS_VIOLATION",
             ExitStatus::ArithmeticOverflow => "ARITHMETIC_OVERFLOW",
             ExitStatus::DivideByZero => "DIVIDE_BY_ZERO",
             ExitStatus::Unknown => "UNKNOWN",
@@ -47,8 +49,9 @@ impl From<u32> for ExitStatus {
             3 => ExitStatus::BytecodeAccessViolation,
             4 => ExitStatus::StackOverflow,
             5 => ExitStatus::StackAccessViolation,
-            6 => ExitStatus::ArithmeticOverflow,
-            7 => ExitStatus::DivideByZero,
+            6 => ExitStatus::ArrayAccessViolation,
+            7 => ExitStatus::ArithmeticOverflow,
+            8 => ExitStatus::DivideByZero,
             _ => ExitStatus::Unknown,
         };
     }
@@ -61,6 +64,8 @@ pub enum Opcode {
     Call,
     Invoke,
     Ret,
+    IAPush,
+    LAPush,
     BPush,
     SPush,
     IPush,
@@ -71,8 +76,11 @@ pub enum Opcode {
     Pop2,
     Load,
     Load2,
+    IALoad,
+    LALoad,
     Store,
     Store2,
+    Drop,
     IAdd,
     LAdd,
     ISub,
@@ -100,6 +108,8 @@ impl Display for Opcode {
             Opcode::Call => "call",
             Opcode::Invoke => "invoke",
             Opcode::Ret => "ret",
+            Opcode::IAPush => "iapush",
+            Opcode::LAPush => "lapush",
             Opcode::BPush => "bpush",
             Opcode::SPush => "spush",
             Opcode::IPush => "ipush",
@@ -110,8 +120,11 @@ impl Display for Opcode {
             Opcode::Pop2 => "pop2",
             Opcode::Load => "load",
             Opcode::Load2 => "load2",
+            Opcode::IALoad => "iaload",
+            Opcode::LALoad => "laload",
             Opcode::Store => "store",
             Opcode::Store2 => "store2",
+            Opcode::Drop => "drop",
             Opcode::IAdd => "iadd",
             Opcode::LAdd => "ladd",
             Opcode::ISub => "isub",
@@ -142,34 +155,39 @@ impl From<u8> for Opcode {
             0x02 => Opcode::Call,
             0x03 => Opcode::Invoke,
             0x04 => Opcode::Ret,
-            0x05 => Opcode::BPush,
-            0x06 => Opcode::SPush,
-            0x07 => Opcode::IPush,
-            0x08 => Opcode::LPush,
-            0x09 => Opcode::Dup,
-            0x0a => Opcode::Dup2,
-            0x0b => Opcode::Pop,
-            0x0c => Opcode::Pop2,
-            0x0d => Opcode::Load,
-            0x0e => Opcode::Load2,
-            0x0f => Opcode::Store,
-            0x10 => Opcode::Store2,
-            0x11 => Opcode::IAdd,
-            0x12 => Opcode::LAdd,
-            0x13 => Opcode::ISub,
-            0x14 => Opcode::LSub,
-            0x15 => Opcode::IMul,
-            0x16 => Opcode::LMul,
-            0x17 => Opcode::IDiv,
-            0x18 => Opcode::LDiv,
-            0x19 => Opcode::IEq,
-            0x1a => Opcode::LEq,
-            0x1b => Opcode::IOrd,
-            0x1c => Opcode::LOrd,
-            0x1d => Opcode::IEqOrd,
-            0x1e => Opcode::LEqOrd,
-            0x1f => Opcode::Goto,
-            0x20 => Opcode::If,
+            0x05 => Opcode::IAPush,
+            0x06 => Opcode::LAPush,
+            0x07 => Opcode::BPush,
+            0x08 => Opcode::SPush,
+            0x09 => Opcode::IPush,
+            0x0a => Opcode::LPush,
+            0x0b => Opcode::Dup,
+            0x0c => Opcode::Dup2,
+            0x0d => Opcode::Pop,
+            0x0e => Opcode::Pop2,
+            0x0f => Opcode::Load,
+            0x10 => Opcode::Load2,
+            0x11 => Opcode::IALoad,
+            0x12 => Opcode::LALoad,
+            0x13 => Opcode::Store,
+            0x14 => Opcode::Store2,
+            0x15 => Opcode::Drop,
+            0x16 => Opcode::IAdd,
+            0x17 => Opcode::LAdd,
+            0x18 => Opcode::ISub,
+            0x19 => Opcode::LSub,
+            0x1a => Opcode::IMul,
+            0x1b => Opcode::LMul,
+            0x1c => Opcode::IDiv,
+            0x1d => Opcode::LDiv,
+            0x1e => Opcode::IEq,
+            0x1f => Opcode::LEq,
+            0x20 => Opcode::IOrd,
+            0x21 => Opcode::LOrd,
+            0x22 => Opcode::IEqOrd,
+            0x23 => Opcode::LEqOrd,
+            0x24 => Opcode::Goto,
+            0x25 => Opcode::If,
             _ => Opcode::Unknown,
         };
     }
@@ -310,6 +328,18 @@ impl Interpreter {
             };
         }
 
+        macro_rules! stack_push_arr {
+            ($ty:ty) => {
+                {
+                    // fix: 指定サイズ過大によるオーバーフロー
+                    let arr_len = next_prg!(usize);
+                    let arr_ptr = malloc(size_of::<usize>() + arr_len * size_of::<$ty>());
+                    *(arr_ptr as *mut usize) = arr_len;
+                    stack_push!(*mut $ty, arr_ptr as *mut $ty);
+                }
+            };
+        }
+
         macro_rules! pop {
             ($ptr:expr, $curr_pos:expr, $ty:ty, $err_status:ident) => {
                 {
@@ -385,6 +415,27 @@ impl Interpreter {
                     let diff = var_table_diff!($ty, $var_i);
                     let value = stack_ptr.sub(diff) as *mut $ty;
                     stack_push!($ty, *value);
+                }
+            };
+        }
+
+        macro_rules! load_arr {
+            ($ty:ty) => {
+                {
+                    let arr_i = stack_pop!(usize);
+                    let arr_ptr = stack_pop!(*mut c_void);
+                    let arr_len = *(arr_ptr as *mut usize);
+
+                    if arr_i >= arr_len {
+                        exit!(ArrayAccessViolation);
+                    }
+
+                    let arr_top_ptr = (arr_ptr as *mut usize).add(1);
+                    let value = *(arr_top_ptr as *mut $ty).add(arr_i);
+                    stack_push!($ty, value);
+
+                    println!("{}", format!("[index {} / len {} / value 0x{:0x}]", arr_i, arr_len, value).bright_green().dimmed());
+                    println!();
                 }
             };
         }
@@ -628,6 +679,8 @@ impl Interpreter {
                         println!("{}", format!("[return to 0x{:0x} / pop {} bytes / return void]", ret_addr, pop_size).bright_green().dimmed());
                         println!();
                     },
+                    Opcode::IAPush => stack_push_arr!(u32),
+                    Opcode::LAPush => stack_push_arr!(u64),
                     Opcode::BPush => stack_push_next_prg!(u8 as u32, u32),
                     Opcode::SPush => stack_push_next_prg!(u16 as u32, u32),
                     Opcode::IPush => stack_push_next_prg!(u32, u32),
@@ -654,6 +707,8 @@ impl Interpreter {
                         let var_i = next_prg!(u16);
                         load!(u64, var_i);
                     },
+                    Opcode::IALoad => load_arr!(u32),
+                    Opcode::LALoad => load_arr!(u64),
                     Opcode::Store => {
                         let var_i = next_prg!(u16);
                         let value = stack_pop!(u32);
@@ -663,6 +718,10 @@ impl Interpreter {
                         let var_i = next_prg!(u16);
                         let value = stack_pop!(u64);
                         store!(u64, var_i, value);
+                    },
+                    Opcode::Drop => {
+                        let ptr = stack_pop!(*mut c_void);
+                        free(ptr);
                     },
                     Opcode::IAdd => calc!(u32, overflowing_add),
                     Opcode::LAdd => calc!(u64, overflowing_add),
