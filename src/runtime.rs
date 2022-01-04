@@ -77,6 +77,8 @@ pub enum Opcode {
     LALoad,
     Store,
     Store2,
+    IAStore,
+    LAStore,
     Drop,
     IAdd,
     LAdd,
@@ -121,6 +123,8 @@ impl Display for Opcode {
             Opcode::LALoad => "laload",
             Opcode::Store => "store",
             Opcode::Store2 => "store2",
+            Opcode::IAStore => "iastore",
+            Opcode::LAStore => "lastore",
             Opcode::Drop => "drop",
             Opcode::IAdd => "iadd",
             Opcode::LAdd => "ladd",
@@ -155,7 +159,7 @@ impl From<u8> for Opcode {
 
 impl Into<u8> for Opcode {
     fn into(self) -> u8 {
-        return (self as u8) - 1;
+        return self as u8 - 1;
     }
 }
 
@@ -411,6 +415,28 @@ impl Interpreter {
                 let diff = var_table_diff!($ty, $var_i);
                 let ptr = stack_ptr.sub(diff) as *mut $ty;
                 *ptr = $value
+            };
+        }
+
+        macro_rules! store_arr {
+            ($ty:ty) => {
+                {
+                    let value = stack_pop!($ty);
+                    let arr_i = stack_pop!(usize);
+                    let arr_ptr = stack_pop!(*mut c_void);
+                    let arr_len = *(arr_ptr as *mut usize);
+
+                    if arr_i >= arr_len {
+                        exit!(ArrayAccessViolation);
+                    }
+
+                    let arr_top_ptr = (arr_ptr as *mut usize).add(1);
+                    let arr_elem_ptr = (arr_top_ptr as *mut $ty).add(arr_i) as *mut $ty;
+                    *arr_elem_ptr = value;
+
+                    println!("{}", format!("[index {} / len {} / change value to 0x{:0x}]", arr_i, arr_len, value).bright_green().dimmed());
+                    println!();
+                }
             };
         }
 
@@ -685,6 +711,8 @@ impl Interpreter {
                         let value = stack_pop!(u64);
                         store!(u64, var_i, value);
                     },
+                    Opcode::IAStore => store_arr!(u32),
+                    Opcode::LAStore => store_arr!(u64),
                     Opcode::Drop => {
                         let ptr = stack_pop!(*mut c_void);
                         free(ptr);
