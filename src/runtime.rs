@@ -298,15 +298,6 @@ impl Interpreter {
             };
         }
 
-        macro_rules! stack_dup {
-            ($ty:ty) => {
-                {
-                    let top_value = stack_top!($ty);
-                    stack_push!($ty, top_value);
-                }
-            };
-        }
-
         macro_rules! pop {
             ($ptr:expr, $curr_pos:expr, $ty:ty, $err_status:ident) => {
                 {
@@ -324,9 +315,29 @@ impl Interpreter {
             };
         }
 
-        macro_rules! stack_pop {
+        // spec: リターンアドレス以前の領域にアクセス可能
+        macro_rules! unsafe_stack_pop {
             ($ty:ty) => {
                 pop!(stack_ptr, sp, $ty, StackAccessViolation)
+            };
+
+            ($ty:ty, $len:expr) => {
+                for _ in 0..$len {
+                    unsafe_stack_pop!($ty);
+                }
+            };
+        }
+
+        macro_rules! stack_pop {
+            ($ty:ty) => {
+                {
+                    // note: リターンアドレス以前の値にアクセスしないようチェック
+                    if sp < bp + size_of::<usize>() * 2 + size_of::<$ty>() {
+                        exit!(StackAccessViolation);
+                    }
+
+                    unsafe_stack_pop!($ty)
+                }
             };
 
             ($ty:ty, $len:expr) => {
@@ -339,7 +350,7 @@ impl Interpreter {
         macro_rules! var_table_diff {
             ($ty:ty, $var_i:expr) => {
                 {
-                    // note: ベースポインタ以前の値にアクセスしないようチェック
+                    // note: リターンアドレス以前の値にアクセスしないようチェック
                     if sp < bp + size_of::<usize>() * 2 {
                         exit!(StackAccessViolation);
                     }
@@ -374,6 +385,7 @@ impl Interpreter {
             };
         }
 
+        // spec: リターンアドレス以前の領域にアクセス可能
         macro_rules! top {
             ($ptr:expr, $counter:expr, $ty:ty, $err_status:ident) => {
                 {
@@ -388,9 +400,22 @@ impl Interpreter {
             };
         }
 
-        macro_rules! stack_top {
+        macro_rules! unsafe_stack_top {
             ($ty:ty) => {
                 top!(stack_ptr, sp, $ty, StackOverflow)
+            };
+        }
+
+        macro_rules! stack_top {
+            ($ty:ty) => {
+                {
+                    // note: リターンアドレス以前の値にアクセスしないようチェック
+                    if sp < bp + size_of::<usize>() * 2 + size_of::<$ty>() {
+                        exit!(StackAccessViolation);
+                    }
+
+                    unsafe_stack_top!($ty)
+                }
             };
         }
 
@@ -552,14 +577,14 @@ impl Interpreter {
 
                         // note: オペランドスタックと変数テーブルをポップ
                         let pop_size = sp - bp - size_of::<usize>() * 2;
-                        stack_pop!(u8, pop_size);
+                        unsafe_stack_pop!(u8, pop_size);
 
                         // note: pc 設定
-                        let ret_addr = stack_pop!(usize);
+                        let ret_addr = unsafe_stack_pop!(usize);
                         jump_prg_to!(ret_addr);
 
                         // note: bp 設定
-                        bp = stack_pop!(usize);
+                        bp = unsafe_stack_pop!(usize);
 
                         println!("{}", format!("[return to 0x{:0x} / pop {} bytes / return void]", ret_addr, pop_size).bright_green().dimmed());
                         println!();
@@ -568,8 +593,14 @@ impl Interpreter {
                     Opcode::SPush => stack_push_next_prg!(u16 as u32, u32),
                     Opcode::IPush => stack_push_next_prg!(u32, u32),
                     Opcode::LPush => stack_push_next_prg!(u64, u64),
-                    Opcode::Dup => stack_dup!(u32),
-                    Opcode::Dup2 => stack_dup!(u64),
+                    Opcode::Dup => {
+                        let top_value = stack_top!(u32);
+                        stack_push!(u32, top_value);
+                    },
+                    Opcode::Dup2 => {
+                        let top_value = stack_top!(u64);
+                        stack_push!(u64, top_value);
+                    },
                     Opcode::Pop => {
                         let _ = stack_pop!(u32);
                     },
