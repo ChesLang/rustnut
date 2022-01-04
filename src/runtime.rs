@@ -83,6 +83,8 @@ pub enum Opcode {
     LOrd,
     IEqOrd,
     LEqOrd,
+    Goto,
+    If,
 }
 
 impl Display for Opcode {
@@ -119,6 +121,8 @@ impl Display for Opcode {
             Opcode::LOrd => "lord",
             Opcode::IEqOrd => "ieqord",
             Opcode::LEqOrd => "leqord",
+            Opcode::Goto => "goto",
+            Opcode::If => "if",
         };
 
         return write!(f, "{}", s);
@@ -158,6 +162,8 @@ impl From<u8> for Opcode {
             0x1b => Opcode::LOrd,
             0x1c => Opcode::IEqOrd,
             0x1d => Opcode::LEqOrd,
+            0x1e => Opcode::Goto,
+            0x1f => Opcode::If,
             _ => Opcode::Unknown,
         };
     }
@@ -495,6 +501,21 @@ impl Interpreter {
             };
         }
 
+        macro_rules! goto {
+            () => {
+                {
+                    let offset = next_prg!(i16);
+                    let inst_i = pc as isize + offset as isize;
+
+                    if 0 > inst_i {
+                        exit!(BytecodeAccessViolation);
+                    }
+
+                    jump_prg_to!(inst_i as usize);
+                }
+            };
+        }
+
         if is_init_succeeded {
             // note: エントリポイント用のコールスタック要素をプッシュ
             println!("{}", "<INVOKE ENTRY POINT>".blue());
@@ -662,6 +683,18 @@ impl Interpreter {
                         let value2 = stack_pop!(u64);
                         let value1 = stack_pop!(u64);
                         stack_push!(u32, (value1 <= value2) as u32);
+                    },
+                    Opcode::Goto => goto!(),
+                    Opcode::If => {
+                        let cond = stack_pop!(u32) != 0;
+
+                        if cond {
+                            goto!();
+                        }
+
+                        let jump_txt = if cond { format!("jump to 0x{:0x}", pc) } else { "no jump".to_string() };
+                        println!("{}", format!("[{}]", jump_txt).bright_green().dimmed());
+                        println!();
                     },
                     Opcode::Unknown => exit!(UnknownOpcode),
                 }
