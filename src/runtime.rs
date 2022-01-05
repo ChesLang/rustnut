@@ -6,7 +6,7 @@ use crate::bytecode::*;
 
 use colored::*;
 
-use libc::{c_void, malloc, free, write};
+use libc::{c_void, malloc, free, read, write};
 
 use num::FromPrimitive;
 use num_derive::*;
@@ -615,6 +615,12 @@ impl Interpreter {
 
                         match code {
                             0x00 => {
+                                let a = [0u8; 4].as_mut_ptr() as *mut c_void;
+                                let size = read(0, a, 4);
+
+                                println!("{} {}", size, raw_ptr_to_string!(a, 4));
+                            },
+                            0x01 => {
                                 let arr_ptr = stack_pop!(*mut usize);
                                 let arr_len = *arr_ptr;
 
