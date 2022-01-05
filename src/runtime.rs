@@ -61,6 +61,8 @@ pub enum Opcode {
     Call,
     Invoke,
     Ret,
+    BAPush,
+    SAPush,
     IAPush,
     LAPush,
     BPush,
@@ -73,10 +75,14 @@ pub enum Opcode {
     Pop2,
     Load,
     Load2,
+    BALoad,
+    SALoad,
     IALoad,
     LALoad,
     Store,
     Store2,
+    BAStore,
+    SAStore,
     IAStore,
     LAStore,
     Drop,
@@ -107,6 +113,8 @@ impl Display for Opcode {
             Opcode::Call => "call",
             Opcode::Invoke => "invoke",
             Opcode::Ret => "ret",
+            Opcode::BAPush => "bapush",
+            Opcode::SAPush => "sapush",
             Opcode::IAPush => "iapush",
             Opcode::LAPush => "lapush",
             Opcode::BPush => "bpush",
@@ -119,10 +127,14 @@ impl Display for Opcode {
             Opcode::Pop2 => "pop2",
             Opcode::Load => "load",
             Opcode::Load2 => "load2",
+            Opcode::BALoad => "baload",
+            Opcode::SALoad => "saload",
             Opcode::IALoad => "iaload",
             Opcode::LALoad => "laload",
             Opcode::Store => "store",
             Opcode::Store2 => "store2",
+            Opcode::BAStore => "bastore",
+            Opcode::SAStore => "sastore",
             Opcode::IAStore => "iastore",
             Opcode::LAStore => "lastore",
             Opcode::Drop => "drop",
@@ -302,8 +314,8 @@ impl Interpreter {
             ($ty:ty) => {
                 {
                     // fix: 指定サイズ過大によるオーバーフロー
-                    let arr_len = next_prg!(usize);
-                    let arr_ptr = malloc(size_of::<usize>() + arr_len * size_of::<$ty>());
+                    let arr_len = next_prg!(usize) * size_of::<$ty>();
+                    let arr_ptr = malloc(size_of::<usize>() + arr_len);
                     *(arr_ptr as *mut usize) = arr_len;
                     stack_push!(*mut $ty, arr_ptr as *mut $ty);
                 }
@@ -394,9 +406,9 @@ impl Interpreter {
                 {
                     let arr_i = stack_pop!(usize);
                     let arr_ptr = stack_pop!(*mut c_void);
-                    let arr_len = *(arr_ptr as *mut usize);
+                    let arr_size = *(arr_ptr as *mut usize);
 
-                    if arr_i >= arr_len {
+                    if (arr_i + 1) * size_of::<$ty>() > arr_size {
                         exit!(ArrayAccessViolation);
                     }
 
@@ -404,7 +416,7 @@ impl Interpreter {
                     let value = *(arr_top_ptr as *mut $ty).add(arr_i);
                     stack_push!($ty, value);
 
-                    println!("{}", format!("[index {} / len {} / value 0x{:0x}]", arr_i, arr_len, value).bright_green().dimmed());
+                    println!("{}", format!("[index {} / {} byte size / value 0x{:0x}]", arr_i, arr_size, value).bright_green().dimmed());
                     println!();
                 }
             };
@@ -419,14 +431,15 @@ impl Interpreter {
         }
 
         macro_rules! store_arr {
-            ($ty:ty) => {
+            ($ty:ty, $pop_ty:ty) => {
                 {
-                    let value = stack_pop!($ty);
+                    // fix: キャストでのオーバーフロー対処 (現在は数値が丸められてる)
+                    let value = stack_pop!($pop_ty) as $ty;
                     let arr_i = stack_pop!(usize);
                     let arr_ptr = stack_pop!(*mut c_void);
-                    let arr_len = *(arr_ptr as *mut usize);
+                    let arr_size = *(arr_ptr as *mut usize);
 
-                    if arr_i >= arr_len {
+                    if (arr_i + 1) * size_of::<$ty>() > arr_size {
                         exit!(ArrayAccessViolation);
                     }
 
@@ -434,7 +447,7 @@ impl Interpreter {
                     let arr_elem_ptr = (arr_top_ptr as *mut $ty).add(arr_i) as *mut $ty;
                     *arr_elem_ptr = value;
 
-                    println!("{}", format!("[index {} / len {} / change value to 0x{:0x}]", arr_i, arr_len, value).bright_green().dimmed());
+                    println!("{}", format!("[index {} / {} byte size / change value to 0x{:0x}]", arr_i, arr_size, value).bright_green().dimmed());
                     println!();
                 }
             };
@@ -597,12 +610,17 @@ impl Interpreter {
                     Opcode::Nop => (),
                     Opcode::Exit => exit!(Success),
                     Opcode::Call => {
+                        // todo: コード追加
                         let code = next_prg!(u8);
 
                         match code {
                             0x00 => {
+                                let arr_ptr = stack_pop!(*mut usize);
+                                let arr_len = *arr_ptr;
+
                                 println!("{}", "[console output]".bright_black());
-                                write(1, stack_ptr.sub(size_of::<usize>()), size_of::<usize>() as u32);
+                                println!("{}", raw_ptr_to_string!(arr_ptr.add(1), arr_len).bright_black());
+                                write(1, arr_ptr.add(1) as *mut c_void, arr_len as u32);
                                 println!();
                             },
                             _ => exit!(UnknownCallNumber),
@@ -671,6 +689,8 @@ impl Interpreter {
                         println!("{}", format!("[return to 0x{:0x} / pop {} bytes / return void]", ret_addr, pop_size).bright_green().dimmed());
                         println!();
                     },
+                    Opcode::BAPush => stack_push_arr!(u8),
+                    Opcode::SAPush => stack_push_arr!(u16),
                     Opcode::IAPush => stack_push_arr!(u32),
                     Opcode::LAPush => stack_push_arr!(u64),
                     Opcode::BPush => stack_push_next_prg!(u8 as u32, u32),
@@ -699,6 +719,8 @@ impl Interpreter {
                         let var_i = next_prg!(u16);
                         load!(u64, var_i);
                     },
+                    Opcode::BALoad => load_arr!(u8),
+                    Opcode::SALoad => load_arr!(u16),
                     Opcode::IALoad => load_arr!(u32),
                     Opcode::LALoad => load_arr!(u64),
                     Opcode::Store => {
@@ -711,8 +733,10 @@ impl Interpreter {
                         let value = stack_pop!(u64);
                         store!(u64, var_i, value);
                     },
-                    Opcode::IAStore => store_arr!(u32),
-                    Opcode::LAStore => store_arr!(u64),
+                    Opcode::BAStore => store_arr!(u8, u32),
+                    Opcode::SAStore => store_arr!(u16, u32),
+                    Opcode::IAStore => store_arr!(u32, u32),
+                    Opcode::LAStore => store_arr!(u64, u64),
                     Opcode::Drop => {
                         let ptr = stack_pop!(*mut c_void);
                         free(ptr);
