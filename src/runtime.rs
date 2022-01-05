@@ -98,10 +98,13 @@ pub enum Opcode {
     LEq,
     IOrd,
     LOrd,
+    IRevOrd,
+    LRevOrd,
     IEqOrd,
     LEqOrd,
     Goto,
     If,
+    IfNot,
 }
 
 impl Display for Opcode {
@@ -150,10 +153,13 @@ impl Display for Opcode {
             Opcode::LEq => "leq",
             Opcode::IOrd => "iord",
             Opcode::LOrd => "lord",
+            Opcode::IRevOrd => "irevord",
+            Opcode::LRevOrd => "lrevord",
             Opcode::IEqOrd => "ieqord",
             Opcode::LEqOrd => "leqord",
             Opcode::Goto => "goto",
             Opcode::If => "if",
+            Opcode::IfNot => "ifnot",
         };
 
         return write!(f, "{}", s);
@@ -162,9 +168,10 @@ impl Display for Opcode {
 
 impl From<u8> for Opcode {
     fn from(v: u8) -> Opcode {
-        return match FromPrimitive::from_u8(v + 1) {
-            Some(e) => e,
-            None => Opcode::Unknown,
+        return if let Some(e) = FromPrimitive::from_u32(v as u32 + 1) {
+            e
+        } else {
+            Opcode::Unknown
         };
     }
 }
@@ -569,11 +576,30 @@ impl Interpreter {
                     let offset = next_prg!(i16);
                     let inst_i = pc as isize + offset as isize;
 
+                    println!("{}", format!("[goto 0x{:0x}]", inst_i).bright_green().dimmed());
+                    println!();
+
                     if 0 > inst_i {
                         exit!(BytecodeAccessViolation);
                     }
 
                     jump_prg_to!(inst_i as usize);
+                }
+            };
+        }
+
+        macro_rules! goto_if {
+            ($cond:expr) => {
+                {
+                    let jump_txt = if $cond { format!("jump to 0x{:0x}", pc) } else { "no jump".to_string() };
+                    println!("{}", format!("[{}]", jump_txt).bright_green().dimmed());
+                    println!();
+
+                    if $cond {
+                        goto!();
+                    } else {
+                        next_prg!(i16);
+                    }
                 }
             };
         }
@@ -775,6 +801,16 @@ impl Interpreter {
                         let value1 = stack_pop!(u64);
                         stack_push!(u32, (value1 < value2) as u32);
                     },
+                    Opcode::IRevOrd => {
+                        let value2 = stack_pop!(u32);
+                        let value1 = stack_pop!(u32);
+                        stack_push!(u32, (value1 > value2) as u32);
+                    },
+                    Opcode::LRevOrd => {
+                        let value2 = stack_pop!(u64);
+                        let value1 = stack_pop!(u64);
+                        stack_push!(u32, (value1 > value2) as u32);
+                    },
                     Opcode::IEqOrd => {
                         let value2 = stack_pop!(u32);
                         let value1 = stack_pop!(u32);
@@ -788,14 +824,11 @@ impl Interpreter {
                     Opcode::Goto => goto!(),
                     Opcode::If => {
                         let cond = stack_pop!(u32) != 0;
-
-                        if cond {
-                            goto!();
-                        }
-
-                        let jump_txt = if cond { format!("jump to 0x{:0x}", pc) } else { "no jump".to_string() };
-                        println!("{}", format!("[{}]", jump_txt).bright_green().dimmed());
-                        println!();
+                        goto_if!(cond);
+                    },
+                    Opcode::IfNot => {
+                        let cond = stack_pop!(u32) == 0;
+                        goto_if!(cond);
                     },
                     Opcode::Unknown => exit!(UnknownOpcode),
                 }
